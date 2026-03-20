@@ -17,14 +17,12 @@ func _input(event: InputEvent) -> void:
 				var grid_path = pathfinding.getPath(from, grid_pos)
 
 				var world_path := PackedVector2Array()
+				world_path.append(unit.position)
 				for p in grid_path:
 					world_path.append(grid.gridToWorld(p))
 
 				world_path = pathfinding.smoothPath(world_path)
-
-				# Skip the first waypoint — unit is already at/near it
-				if world_path.size() > 0 and unit.position.distance_to(world_path[0]) < grid.cell_size * 0.5:
-					world_path.remove_at(0)
+				world_path.remove_at(0)
 
 				unit.path = world_path
 				get_viewport().set_input_as_handled()
