@@ -91,33 +91,48 @@ func _hasLOS(a: Vector2, b: Vector2) -> bool:
 	var half := Vector2(grid.cell_size, grid.cell_size) * 0.5
 	var a_grid = grid.worldToGrid(a + half)
 	var b_grid = grid.worldToGrid(b + half)
-	for cell in _bresenham(a_grid, b_grid):
+	for cell in _supercover(a_grid, b_grid):
 		if grid.grid.has(cell) and not grid.grid[cell].navigable:
 			return false
 	return true
 
-func _bresenham(from: Vector2, to: Vector2) -> Array:
+# Supercover DDA: visits every cell the line passes through, including
+# cells only touched at a corner. Prevents diagonal wall-phasing.
+func _supercover(from: Vector2, to: Vector2) -> Array:
 	var cells: Array = []
-	var x0: int = int(from.x)
-	var y0: int = int(from.y)
+	var x: int = int(from.x)
+	var y: int = int(from.y)
 	var x1: int = int(to.x)
 	var y1: int = int(to.y)
-	var dx: int = abs(x1 - x0)
-	var dy: int = abs(y1 - y0)
-	var sx: int = 1 if x0 < x1 else -1
-	var sy: int = 1 if y0 < y1 else -1
-	var err: int = dx - dy
-	while true:
-		cells.append(Vector2(x0, y0))
-		if x0 == x1 and y0 == y1:
-			break
-		var e2: int = 2 * err
-		if e2 > -dy:
-			err -= dy
-			x0 += sx
-		if e2 < dx:
-			err += dx
-			y0 += sy
+	var dx: int = x1 - x
+	var dy: int = y1 - y
+	var nx: int = abs(dx)
+	var ny: int = abs(dy)
+	var sign_x: int = 1 if dx > 0 else -1
+	var sign_y: int = 1 if dy > 0 else -1
+
+	cells.append(Vector2(x, y))
+	var ix: int = 0
+	var iy: int = 0
+	while ix < nx or iy < ny:
+		var t1: int = (1 + 2 * ix) * ny
+		var t2: int = (1 + 2 * iy) * nx
+		if t1 == t2:
+			# Line passes exactly through a corner — check both adjacent cells
+			# to prevent squeezing diagonally between two walls
+			cells.append(Vector2(x + sign_x, y))
+			cells.append(Vector2(x, y + sign_y))
+			x += sign_x
+			y += sign_y
+			ix += 1
+			iy += 1
+		elif t1 < t2:
+			x += sign_x
+			ix += 1
+		else:
+			y += sign_y
+			iy += 1
+		cells.append(Vector2(x, y))
 	return cells
 
 func _ready() -> void:
