@@ -1,10 +1,9 @@
 class_name Unit
 extends Area2D
 
-@onready var main = get_tree().root.get_node("Main")
-@onready var grid: Grid = main.get_node("Grid")
+@onready var grid: Grid = get_parent().get_parent() as Grid
 @onready var pf: Pathfinder = grid.get_node("Pathfinding")
-@onready var gui = main.get_node("CanvasLayer").get_node("GUI")
+@onready var gui = grid.get_parent().get_node("CanvasLayer/GUI")
 
 signal unitSelected(obj)
 

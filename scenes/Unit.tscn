@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://tdqsa8iv10of"]
 
 [ext_resource type="Script" uid="uid://cibgqck5xn710" path="res://scripts/unit/Unit.gd" id="1_2c74p"]
-[ext_resource type="Texture2D" uid="uid://csxlysbk05852" path="res://art/Tiles/tile_0024.png" id="2_2c74p"]
+[ext_resource type="Texture2D" uid="uid://ds5fd677fkfta" path="res://art/colonist.png" id="2_2c74p"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_nqku5"]
 size = Vector2(128, 128)
@@ -11,7 +11,6 @@ script = ExtResource("1_2c74p")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=192860447]
 texture_filter = 1
-scale = Vector2(8, 8)
 texture = ExtResource("2_2c74p")
 centered = false
 
