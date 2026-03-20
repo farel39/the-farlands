@@ -31,16 +31,23 @@ func connectPoint(_point: Vector2):
 	var _pointID = getPointID(_point)
 	for direction in DIRECTIONS:
 		var neighbor = _point + direction
-		var neighborID = getPointID(neighbor)
-		if grid.grid.has(neighbor) and grid.grid[neighbor].navigable:
-			aStar.connect_points(_pointID, neighborID)
+		if not grid.grid.has(neighbor) or not grid.grid[neighbor].navigable:
+			continue
+		# Diagonal moves must not cut through a walled corner
+		if direction.x != 0 and direction.y != 0:
+			var c1 = _point + Vector2(direction.x, 0)
+			var c2 = _point + Vector2(0, direction.y)
+			if (grid.grid.has(c1) and not grid.grid[c1].navigable) or \
+			   (grid.grid.has(c2) and not grid.grid[c2].navigable):
+				continue
+		aStar.connect_points(_pointID, getPointID(neighbor))
 
 func disconnectPoint(_point: Vector2):
 	var _pointID = getPointID(_point)
 	for direction in DIRECTIONS:
 		var neighbor = _point + direction
-		var neighborID = getPointID(neighbor)
-		aStar.disconnect_points(_pointID, neighborID)
+		if grid.grid.has(neighbor):
+			aStar.disconnect_points(_pointID, getPointID(neighbor))
 
 func connectAllPoints():
 	for point in grid.grid:
@@ -57,6 +64,29 @@ func _on_nav_changed(pos: Vector2) -> void:
 		connectPoint(pos)
 	else:
 		disconnectPoint(pos)
+	# A wall placed at pos becomes a corner for 4 diagonal pairs of neighbors.
+	# Those diagonals must be disconnected (or reconnected if wall removed).
+	_refresh_corner_diagonals(pos)
+
+func _refresh_corner_diagonals(pos: Vector2) -> void:
+	var pairs := [
+		[pos + Vector2(-1, 0), pos + Vector2(0, -1)],
+		[pos + Vector2(-1, 0), pos + Vector2(0,  1)],
+		[pos + Vector2( 1, 0), pos + Vector2(0, -1)],
+		[pos + Vector2( 1, 0), pos + Vector2(0,  1)],
+	]
+	for pair in pairs:
+		var a: Vector2 = pair[0]
+		var b: Vector2 = pair[1]
+		if not (grid.grid.has(a) and grid.grid.has(b)):
+			continue
+		var aID := getPointID(a)
+		var bID := getPointID(b)
+		var all_clear: bool = grid.grid[a].navigable and grid.grid[b].navigable and grid.grid[pos].navigable
+		if all_clear:
+			aStar.connect_points(aID, bID)
+		else:
+			aStar.disconnect_points(aID, bID)
 
 func getPath(_pointA: Vector2, _pointB: Vector2) -> PackedVector2Array:
 	var aID = getPointID(_pointA)
