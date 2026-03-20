@@ -20,6 +20,8 @@ func _input(event: InputEvent) -> void:
 				for p in grid_path:
 					world_path.append(grid.gridToWorld(p))
 
+				world_path = pathfinding.smoothPath(world_path)
+
 				# Skip the first waypoint — unit is already at/near it
 				if world_path.size() > 0 and unit.position.distance_to(world_path[0]) < grid.cell_size * 0.5:
 					world_path.remove_at(0)
