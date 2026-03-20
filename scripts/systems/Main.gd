@@ -13,7 +13,7 @@ func _input(event: InputEvent) -> void:
 		if not grid.placement_mode:
 			var grid_pos = grid.worldToGrid(get_global_mouse_position())
 			if grid.grid.has(grid_pos):
-				var from = grid.worldToGrid(unit.position)
+				var from = grid.worldToGrid(unit.path[0]) if unit.path.size() > 0 else grid.worldToGrid(unit.position)
 				var grid_path = pathfinding.getPath(from, grid_pos)
 
 				var world_path := PackedVector2Array()
