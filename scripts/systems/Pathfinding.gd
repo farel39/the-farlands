@@ -5,7 +5,10 @@ var aStar = AStar2D.new()
 @onready var main = get_tree().root.get_node("Main")
 @onready var grid: Grid = main.get_node("Grid")
 
-const DIRECTIONS = [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]
+const DIRECTIONS = [
+	Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT,
+	Vector2(-1, -1), Vector2(1, -1), Vector2(-1, 1), Vector2(1, 1)
+]
 
 func addPoints():
 	var curID = 0

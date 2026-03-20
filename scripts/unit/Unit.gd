@@ -36,8 +36,3 @@ func move(delta):
 		else:
 			position += (grid.gridToWorld(path[0]) - position).normalized()*data.speed * delta
 
-#func _input(event):
-	#if event is InputEventMouseButton and event.button_index ==MOUSE_BUTTON_LEFT:
-		#if event.pressed:
-			#var clicked = grid.worldToGrid(get_global_mouse_position())
-			#path.assign(pf.getPath(pos, clicked))
