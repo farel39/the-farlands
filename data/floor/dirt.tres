@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="FloorData" format=3 uid="uid://b4emf4uqk7wap"]
+
+[ext_resource type="Script" uid="uid://3smka053qnh5" path="res://scripts/FloorData.gd" id="1_x7fw6"]
+
+[resource]
+script = ExtResource("1_x7fw6")
+name = "Dirt"
+metadata/_custom_type_script = "uid://3smka053qnh5"
