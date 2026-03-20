@@ -46,15 +46,19 @@ func _on_back_pressed() -> void:
 
 func _on_wood_wall_pressed() -> void:
 	grid.enter_placement_mode(BUILDINGS["WoodWall"])
-	_on_back_pressed()
+	_show_base_buttons()
 
 func _on_stone_wall_pressed() -> void:
 	grid.enter_placement_mode(BUILDINGS["StoneWall"])
-	_on_back_pressed()
+	_show_base_buttons()
 
 func _on_dirt_floor_pressed() -> void:
 	grid.enter_placement_mode(BUILDINGS["DirtFloor"])
-	_on_back_pressed()
+	_show_base_buttons()
+
+func _show_base_buttons() -> void:
+	$BaseButtons.visible = true
+	$ConstructButtons.visible = false
 
 func _process(_delta: float) -> void:
 	pass
