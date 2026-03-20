@@ -1,11 +1,11 @@
 class_name Unit
 extends Area2D
 
-@onready var grid: Grid = get_parent().get_parent() as Grid
-@onready var pf: Pathfinder = grid.get_node("Pathfinding")
-@onready var gui = grid.get_parent().get_node("CanvasLayer/GUI")
-
 signal unitSelected(obj)
+
+var grid: Grid
+var pf: Pathfinder
+var gui
 
 var data: UnitData = UnitData.new()
 
@@ -15,8 +15,11 @@ var pos: Vector2 :
 		return pos
 	set(value):
 		pos = value
-# Called when the node enters the scene tree for the first time.
+
 func _ready() -> void:
+	grid = get_parent().get_parent() as Grid
+	pf = grid.get_node("Pathfinding")
+	gui = grid.get_parent().get_node("CanvasLayer/GUI")
 	pos = grid.worldToGrid(position)
 
 
