@@ -9,12 +9,11 @@ const DIRECTIONS = [
 	Vector2(-1, -1), Vector2(1, -1), Vector2(-1, 1), Vector2(1, 1)
 ]
 
-func addPoints():
-	var curID = 0
-	for point in grid.grid:
-		aStar.add_point(curID, grid.gridToWorld(point))
-		curID += 1
+# Internal: includes disabled points, used for graph operations on specific cells.
+func _pid(gridPoint: Vector2) -> int:
+	return aStar.get_closest_point(grid.gridToWorld(gridPoint), true)
 
+# Public: excludes disabled (wall) points, used for navigation queries.
 func getPointID(gridPoint: Vector2) -> int:
 	return aStar.get_closest_point(grid.gridToWorld(gridPoint))
 
@@ -27,8 +26,14 @@ func getIDWorldPos(_id: int) -> Vector2:
 func getIDGridPos(_id: int) -> Vector2:
 	return grid.worldToGrid(getIDWorldPos(_id))
 
+func addPoints():
+	var curID = 0
+	for point in grid.grid:
+		aStar.add_point(curID, grid.gridToWorld(point))
+		curID += 1
+
 func connectPoint(_point: Vector2):
-	var _pointID = getPointID(_point)
+	var _pointID = _pid(_point)
 	for direction in DIRECTIONS:
 		var neighbor = _point + direction
 		if not grid.grid.has(neighbor) or not grid.grid[neighbor].navigable:
@@ -40,14 +45,14 @@ func connectPoint(_point: Vector2):
 			if (grid.grid.has(c1) and not grid.grid[c1].navigable) or \
 			   (grid.grid.has(c2) and not grid.grid[c2].navigable):
 				continue
-		aStar.connect_points(_pointID, getPointID(neighbor))
+		aStar.connect_points(_pointID, _pid(neighbor))
 
 func disconnectPoint(_point: Vector2):
-	var _pointID = getPointID(_point)
+	var _pointID = _pid(_point)
 	for direction in DIRECTIONS:
 		var neighbor = _point + direction
 		if grid.grid.has(neighbor):
-			aStar.disconnect_points(_pointID, getPointID(neighbor))
+			aStar.disconnect_points(_pointID, _pid(neighbor))
 
 func connectAllPoints():
 	for point in grid.grid:
@@ -60,12 +65,13 @@ func initialize():
 		grid.grid[point].navChanged.connect(_on_nav_changed)
 
 func _on_nav_changed(pos: Vector2) -> void:
+	var pid := _pid(pos)
 	if grid.grid[pos].navigable:
+		aStar.set_point_disabled(pid, false)
 		connectPoint(pos)
 	else:
 		disconnectPoint(pos)
-	# A wall placed at pos becomes a corner for 4 diagonal pairs of neighbors.
-	# Those diagonals must be disconnected (or reconnected if wall removed).
+		aStar.set_point_disabled(pid, true)
 	_refresh_corner_diagonals(pos)
 
 func _refresh_corner_diagonals(pos: Vector2) -> void:
@@ -80,8 +86,8 @@ func _refresh_corner_diagonals(pos: Vector2) -> void:
 		var b: Vector2 = pair[1]
 		if not (grid.grid.has(a) and grid.grid.has(b)):
 			continue
-		var aID := getPointID(a)
-		var bID := getPointID(b)
+		var aID := _pid(a)
+		var bID := _pid(b)
 		var all_clear: bool = grid.grid[a].navigable and grid.grid[b].navigable and grid.grid[pos].navigable
 		if all_clear:
 			aStar.connect_points(aID, bID)
@@ -98,7 +104,6 @@ func getPath(_pointA: Vector2, _pointB: Vector2) -> PackedVector2Array:
 	return gridPath
 
 # Removes redundant waypoints by checking direct line-of-sight between points.
-# Result: unit walks in straight lines at any angle, only bending around walls.
 func smoothPath(world_path: PackedVector2Array) -> PackedVector2Array:
 	if world_path.size() <= 2:
 		return world_path
@@ -126,8 +131,7 @@ func _hasLOS(a: Vector2, b: Vector2) -> bool:
 			return false
 	return true
 
-# Supercover DDA: visits every cell the line passes through, including
-# cells only touched at a corner. Prevents diagonal wall-phasing.
+# Supercover DDA: visits every cell the line passes through.
 func _supercover(from: Vector2, to: Vector2) -> Array:
 	var cells: Array = []
 	var x: int = int(from.x)
@@ -148,8 +152,6 @@ func _supercover(from: Vector2, to: Vector2) -> Array:
 		var t1: int = (1 + 2 * ix) * ny
 		var t2: int = (1 + 2 * iy) * nx
 		if t1 == t2:
-			# Line passes exactly through a corner — check both adjacent cells
-			# to prevent squeezing diagonally between two walls
 			cells.append(Vector2(x + sign_x, y))
 			cells.append(Vector2(x, y + sign_y))
 			x += sign_x
