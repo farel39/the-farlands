@@ -32,12 +32,18 @@ texture = ExtResource("5_gqpea")
 texture_region_size = Vector2i(128, 128)
 0:0/0 = 0
 
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_wood"]
+texture = ExtResource("10_krkin")
+texture_region_size = Vector2i(128, 128)
+0:0/0 = 0
+
 [sub_resource type="TileSet" id="TileSet_q8kdv"]
 tile_size = Vector2i(128, 128)
 sources/0 = SubResource("TileSetAtlasSource_1jtt4")
 sources/1 = SubResource("TileSetAtlasSource_vup2a")
 sources/2 = SubResource("TileSetAtlasSource_p7wog")
 sources/3 = SubResource("TileSetAtlasSource_0cfwy")
+sources/4 = SubResource("TileSetAtlasSource_wood")
 
 [node name="Main" type="Node2D" unique_id=681001700]
 script = ExtResource("1_8llo8")
@@ -48,6 +54,9 @@ format = 2
 layer_0/name = "floor"
 layer_1/name = "building"
 layer_1/z_index = 1
+layer_2/name = "preview"
+layer_2/z_index = 2
+layer_2/modulate = Color(1, 1, 1, 0.5)
 script = ExtResource("2_brr1f")
 show_debug = true
 

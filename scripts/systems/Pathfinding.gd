@@ -13,7 +13,7 @@ func addPoints():
 		aStar.add_point(curID, grid.gridToWorld(point))
 		curID += 1
 
-func getPointID(gridPoint: Vector2)-> int:
+func getPointID(gridPoint: Vector2) -> int:
 	return aStar.get_closest_point(grid.gridToWorld(gridPoint))
 
 func getWorldID(worldPoint: Vector2) -> int:
@@ -23,8 +23,7 @@ func getIDWorldPos(_id: int) -> Vector2:
 	return aStar.get_point_position(_id)
 
 func getIDGridPos(_id: int) -> Vector2:
-	var worldPos = getIDWorldPos(_id)
-	return grid.worldToGrid(worldPos)
+	return grid.worldToGrid(getIDWorldPos(_id))
 
 func connectPoint(_point: Vector2):
 	var _pointID = getPointID(_point)
@@ -48,6 +47,14 @@ func connectAllPoints():
 func initialize():
 	addPoints()
 	connectAllPoints()
+	for point in grid.grid:
+		grid.grid[point].navChanged.connect(_on_nav_changed)
+
+func _on_nav_changed(pos: Vector2) -> void:
+	if grid.grid[pos].navigable:
+		connectPoint(pos)
+	else:
+		disconnectPoint(pos)
 
 func getPath(_pointA: Vector2, _pointB: Vector2):
 	var aID = getPointID(_pointA)
@@ -57,12 +64,9 @@ func getPath(_pointA: Vector2, _pointB: Vector2):
 	for point in worldPath:
 		gridPath.append(grid.worldToGrid(point))
 	return gridPath
-	
-# Called when the node enters the scene tree for the first time.
+
 func _ready() -> void:
-	pass # Replace with function body.
+	pass
 
-
-# Called every frame. 'delta' is the elapsed time since the previous frame.
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	pass
