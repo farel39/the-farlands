@@ -8,31 +8,28 @@ var pf: Pathfinder
 var gui
 
 var data: UnitData = UnitData.new()
-
-var path: Array[Vector2]
-var pos: Vector2 :
-	get:
-		return pos
-	set(value):
-		pos = value
+var path: PackedVector2Array
 
 func _ready() -> void:
 	grid = get_parent().get_parent() as Grid
 	pf = grid.get_node("Pathfinding")
 	gui = grid.get_parent().get_node("CanvasLayer/GUI")
-	pos = grid.worldToGrid(position)
 
-
-# Called every frame. 'delta' is the elapsed time since the previous frame.
 func _process(delta: float) -> void:
 	move(delta)
-	
-func move(delta):
-	if path.size()>0:
-		if position.distance_to(grid.gridToWorld(path[0]))<5:
-			position = grid.gridToWorld(path[0])
-			pos = path[0]
-			path.pop_front()
-		else:
-			position += (grid.gridToWorld(path[0]) - position).normalized()*data.speed * delta
 
+func move(delta: float) -> void:
+	var remaining := data.speed * delta
+	while remaining > 0.0 and not path.is_empty():
+		var to_next := path[0] - position
+		var dist := to_next.length()
+		if dist <= remaining:
+			position = path[0]
+			path.remove_at(0)
+			remaining -= dist
+		else:
+			position += to_next.normalized() * remaining
+			remaining = 0.0
+
+func get_grid_pos() -> Vector2:
+	return grid.worldToGrid(position)
