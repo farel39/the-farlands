@@ -13,7 +13,8 @@ func _input(event: InputEvent) -> void:
 		if not grid.placement_mode:
 			var grid_pos = grid.worldToGrid(get_global_mouse_position())
 			if grid.grid.has(grid_pos):
-				unit.path.assign(pathfinding.getPath(unit.pos, grid_pos))
+				var from = grid.worldToGrid(unit.position)
+				unit.path.assign(pathfinding.getPath(from, grid_pos))
 				get_viewport().set_input_as_handled()
 
 func _process(_delta: float) -> void:
