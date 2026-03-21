@@ -73,9 +73,7 @@ func _handle_click() -> void:
 	if not cell.navigable:
 		return
 
-	# Move command — apply to all selected units in formation
-	if selected_units.is_empty():
-		return
+	# Move command — apply to all drafted units in formation
 	var drafted := all_units.filter(func(u): return u.drafted)
 	if drafted.is_empty():
 		return
