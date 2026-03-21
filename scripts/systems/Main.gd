@@ -3,10 +3,12 @@ extends Node2D
 @onready var grid: Grid = $Grid
 @onready var pathfinding: Pathfinder = $Grid/Pathfinding
 @onready var unit: Unit = $Grid/Units/Unit
+@onready var gui = $CanvasLayer/GUI
 
 func _ready() -> void:
 	grid.generateGrid()
 	pathfinding.initialize()
+	gui.cut_requested.connect(_on_cut_requested)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -16,17 +18,21 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 			var cell: CellData = grid.grid[grid_pos]
 			if cell.occupier == "Tree":
-				var target = _closest_adjacent(grid_pos)
-				if target == Vector2(-1, -1):
-					return
-				_move_unit(target)
-				unit.harvest_target = grid_pos
+				gui.show_tree_panel(grid_pos, get_viewport().get_mouse_position())
 			else:
 				if not cell.navigable:
 					return
 				unit.harvest_target = Vector2(-1, -1)
 				_move_unit(grid_pos)
 			get_viewport().set_input_as_handled()
+
+
+func _on_cut_requested(grid_pos: Vector2) -> void:
+	var target := _closest_adjacent(grid_pos)
+	if target == Vector2(-1, -1):
+		return
+	_move_unit(target)
+	unit.harvest_target = grid_pos
 
 
 func _move_unit(grid_pos: Vector2) -> void:
