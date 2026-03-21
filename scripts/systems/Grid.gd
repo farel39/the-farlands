@@ -35,6 +35,44 @@ func generateGrid():
 				label.position = gridToWorld(Vector2(x, y))
 				label.text = str(Vector2(x, y))
 				$Debug.add_child(label)
+	spawnTrees()
+
+
+func spawnTrees() -> void:
+	var tree_texture = load("res://art/tree.png")
+	var placed: Array = []
+	const MIN_DISTANCE = 3
+	const MAX_TREES = 7
+
+	var candidates: Array = []
+	for x in range(1, width - 1):
+		for y in range(1, height - 1):
+			candidates.append(Vector2(x, y))
+	candidates.shuffle()
+
+	for pos in candidates:
+		if placed.size() >= MAX_TREES:
+			break
+		# Keep cells near the unit spawn (0,0) clear
+		if pos.distance_to(Vector2(0, 0)) < MIN_DISTANCE:
+			continue
+		var too_close := false
+		for p in placed:
+			if pos.distance_to(p) < MIN_DISTANCE:
+				too_close = true
+				break
+		if too_close:
+			continue
+
+		placed.append(pos)
+		var cell: CellData = grid[pos]
+		cell.occupier = "Tree"
+		cell.navigable = false
+
+		var sprite := Sprite2D.new()
+		sprite.texture = tree_texture
+		sprite.position = gridToWorld(pos) + Vector2(cell_size / 2.0, cell_size / 2.0)
+		add_child(sprite)
 
 
 func gridToWorld(_pos: Vector2) -> Vector2:
