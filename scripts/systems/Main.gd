@@ -22,8 +22,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				if not cell.navigable:
 					return
-				unit.harvest_target = Vector2(-1, -1)
-				_move_unit(grid_pos)
+				unit.move_to(grid_pos)
 			get_viewport().set_input_as_handled()
 
 
@@ -31,20 +30,7 @@ func _on_cut_requested(grid_pos: Vector2) -> void:
 	var target := _closest_adjacent(grid_pos)
 	if target == Vector2(-1, -1):
 		return
-	_move_unit(target)
-	unit.harvest_target = grid_pos
-
-
-func _move_unit(grid_pos: Vector2) -> void:
-	var from = pathfinding.getIDGridPos(pathfinding.getWorldID(unit.position))
-	var grid_path = pathfinding.getPath(from, grid_pos)
-	var world_path := PackedVector2Array()
-	world_path.append(unit.position)
-	for p in grid_path:
-		world_path.append(grid.gridToWorld(p))
-	world_path = pathfinding.smoothPath(world_path)
-	world_path.remove_at(0)
-	unit.path = world_path
+	unit.queue_harvest(target, grid_pos)
 
 
 func _closest_adjacent(pos: Vector2) -> Vector2:
