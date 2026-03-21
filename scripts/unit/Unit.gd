@@ -10,14 +10,14 @@ var gui
 var data: UnitData = UnitData.new()
 var path: PackedVector2Array
 var harvest_target: Vector2 = Vector2(-1, -1)
-
-# Each task: { "move_to": Vector2, "harvest_target": Vector2 }
 var task_queue: Array = []
+var drafted: bool = false
 
 func _ready() -> void:
 	grid = get_parent().get_parent() as Grid
 	pf = grid.get_node("Pathfinding")
 	gui = grid.get_parent().get_node("CanvasLayer/GUI")
+	input_event.connect(_on_input_event)
 
 func _process(delta: float) -> void:
 	move(delta)
@@ -43,7 +43,13 @@ func move(delta: float) -> void:
 		_start_next_task()
 
 
-# Immediately move to a grid position, clearing any queued tasks.
+# Move immediately under direct player control — preserves task queue.
+func draft_move_to(grid_pos: Vector2) -> void:
+	harvest_target = Vector2(-1, -1)
+	path = _build_path(grid_pos)
+
+
+# Move immediately, clearing all queued tasks.
 func move_to(grid_pos: Vector2) -> void:
 	task_queue.clear()
 	harvest_target = Vector2(-1, -1)
@@ -53,12 +59,20 @@ func move_to(grid_pos: Vector2) -> void:
 # Add a harvest task to the back of the queue.
 func queue_harvest(dest: Vector2, tree_pos: Vector2) -> void:
 	task_queue.append({"move_to": dest, "harvest_target": tree_pos})
-	if path.is_empty():
+	if path.is_empty() and not drafted:
+		_start_next_task()
+
+
+func set_drafted(value: bool) -> void:
+	drafted = value
+	if not drafted:
+		path = PackedVector2Array()
+		harvest_target = Vector2(-1, -1)
 		_start_next_task()
 
 
 func _start_next_task() -> void:
-	if task_queue.is_empty():
+	if drafted or task_queue.is_empty():
 		return
 	var task: Dictionary = task_queue.pop_front()
 	harvest_target = task["harvest_target"]
@@ -76,6 +90,12 @@ func _build_path(grid_pos: Vector2) -> PackedVector2Array:
 	if not world_path.is_empty():
 		world_path.remove_at(0)
 	return world_path
+
+
+func _on_input_event(_viewport: Node, event: InputEvent, _shape_idx: int) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		gui.show_unit_panel(self, get_viewport().get_mouse_position())
+		get_viewport().set_input_as_handled()
 
 
 func get_grid_pos() -> Vector2:

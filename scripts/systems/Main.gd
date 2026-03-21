@@ -22,7 +22,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				if not cell.navigable:
 					return
-				unit.move_to(grid_pos)
+				if unit.drafted:
+					unit.draft_move_to(grid_pos)
+				elif unit.task_queue.is_empty():
+					unit.move_to(grid_pos)
+				else:
+					return
 			get_viewport().set_input_as_handled()
 
 
