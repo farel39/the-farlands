@@ -17,7 +17,6 @@ func _ready() -> void:
 	grid = get_parent().get_parent() as Grid
 	pf = grid.get_node("Pathfinding")
 	gui = grid.get_parent().get_node("CanvasLayer/GUI")
-	input_event.connect(_on_input_event)
 
 func _process(delta: float) -> void:
 	move(delta)
@@ -90,12 +89,6 @@ func _build_path(grid_pos: Vector2) -> PackedVector2Array:
 	if not world_path.is_empty():
 		world_path.remove_at(0)
 	return world_path
-
-
-func _on_input_event(_viewport: Node, event: InputEvent, _shape_idx: int) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		gui.show_unit_panel(self, get_viewport().get_mouse_position())
-		get_viewport().set_input_as_handled()
 
 
 func get_grid_pos() -> Vector2:

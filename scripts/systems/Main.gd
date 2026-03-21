@@ -6,7 +6,6 @@ extends Node2D
 @onready var gui = $CanvasLayer/GUI
 
 func _ready() -> void:
-	get_viewport().physics_object_picking = true
 	grid.generateGrid()
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
@@ -17,9 +16,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			var grid_pos = grid.worldToGrid(get_global_mouse_position())
 			if not grid.grid.has(grid_pos):
 				return
+			var mouse_screen := get_viewport().get_mouse_position()
+			# Check if click is on the unit's cell
+			if grid_pos == grid.worldToGrid(unit.position):
+				gui.show_unit_panel(unit, mouse_screen)
+				get_viewport().set_input_as_handled()
+				return
 			var cell: CellData = grid.grid[grid_pos]
 			if cell.occupier == "Tree":
-				gui.show_tree_panel(grid_pos, get_viewport().get_mouse_position())
+				gui.show_tree_panel(grid_pos, mouse_screen)
 			else:
 				if not cell.navigable:
 					return
