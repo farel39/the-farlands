@@ -33,6 +33,8 @@ func addPoints():
 		curID += 1
 
 func connectPoint(_point: Vector2):
+	if not grid.grid[_point].navigable:
+		return
 	var _pointID = _pid(_point)
 	for direction in DIRECTIONS:
 		var neighbor = _point + direction
@@ -61,6 +63,9 @@ func connectAllPoints():
 func initialize():
 	addPoints()
 	connectAllPoints()
+	for point in grid.grid:
+		if not grid.grid[point].navigable:
+			aStar.set_point_disabled(_pid(point), true)
 	for point in grid.grid:
 		grid.grid[point].navChanged.connect(_on_nav_changed)
 
