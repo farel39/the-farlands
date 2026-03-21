@@ -10,6 +10,8 @@ const BUILDINGS = {
 	"DirtFloor": { "name": "Dirt Floor", "source_id": 0, "layer": 0, "navigable": true  },
 }
 
+var wood_label: Label
+
 var selectedObject = null :
 	get:
 		return selectedObject
@@ -29,6 +31,9 @@ func setSelectedObject(obj):
 	selectedObject = obj
 
 func _ready() -> void:
+	wood_label = Label.new()
+	wood_label.position = Vector2(8, 8)
+	add_child(wood_label)
 	$BaseButtons/HBoxContainer/Construct.pressed.connect(_on_construct_pressed)
 	$ConstructButtons/HBoxContainer/Back.pressed.connect(_on_back_pressed)
 	$ConstructButtons/HBoxContainer/WoodWall.pressed.connect(_on_wood_wall_pressed)
@@ -61,4 +66,4 @@ func _show_base_buttons() -> void:
 	$ConstructButtons.visible = false
 
 func _process(_delta: float) -> void:
-	pass
+	wood_label.text = "Wood: " + str(grid.wood)

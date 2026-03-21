@@ -12,20 +12,47 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if not grid.placement_mode:
 			var grid_pos = grid.worldToGrid(get_global_mouse_position())
-			if grid.grid.has(grid_pos):
-				var from = pathfinding.getIDGridPos(pathfinding.getWorldID(unit.position))
-				var grid_path = pathfinding.getPath(from, grid_pos)
+			if not grid.grid.has(grid_pos):
+				return
+			var cell: CellData = grid.grid[grid_pos]
+			if cell.occupier == "Tree":
+				var target = _closest_adjacent(grid_pos)
+				if target == Vector2(-1, -1):
+					return
+				_move_unit(target)
+				unit.harvest_target = grid_pos
+			else:
+				if not cell.navigable:
+					return
+				unit.harvest_target = Vector2(-1, -1)
+				_move_unit(grid_pos)
+			get_viewport().set_input_as_handled()
 
-				var world_path := PackedVector2Array()
-				world_path.append(unit.position)
-				for p in grid_path:
-					world_path.append(grid.gridToWorld(p))
 
-				world_path = pathfinding.smoothPath(world_path)
-				world_path.remove_at(0)
+func _move_unit(grid_pos: Vector2) -> void:
+	var from = pathfinding.getIDGridPos(pathfinding.getWorldID(unit.position))
+	var grid_path = pathfinding.getPath(from, grid_pos)
+	var world_path := PackedVector2Array()
+	world_path.append(unit.position)
+	for p in grid_path:
+		world_path.append(grid.gridToWorld(p))
+	world_path = pathfinding.smoothPath(world_path)
+	world_path.remove_at(0)
+	unit.path = world_path
 
-				unit.path = world_path
-				get_viewport().set_input_as_handled()
+
+func _closest_adjacent(pos: Vector2) -> Vector2:
+	var best := Vector2(-1, -1)
+	var best_dist := INF
+	var unit_grid := grid.worldToGrid(unit.position)
+	for dir in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
+		var neighbor: Vector2 = pos + dir
+		if grid.grid.has(neighbor) and grid.grid[neighbor].navigable:
+			var d := unit_grid.distance_to(neighbor)
+			if d < best_dist:
+				best_dist = d
+				best = neighbor
+	return best
 
 func _process(_delta: float) -> void:
 	pass

@@ -9,6 +9,7 @@ var gui
 
 var data: UnitData = UnitData.new()
 var path: PackedVector2Array
+var harvest_target: Vector2 = Vector2(-1, -1)
 
 func _ready() -> void:
 	grid = get_parent().get_parent() as Grid
@@ -30,6 +31,9 @@ func move(delta: float) -> void:
 		else:
 			position += to_next.normalized() * remaining
 			remaining = 0.0
+	if path.is_empty() and harvest_target != Vector2(-1, -1):
+		grid.harvest_tree(harvest_target)
+		harvest_target = Vector2(-1, -1)
 
 func get_grid_pos() -> Vector2:
 	return grid.worldToGrid(position)

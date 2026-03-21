@@ -6,6 +6,8 @@ extends TileMap
 @export var cell_size: int = 128
 
 var grid: Dictionary = {}
+var tree_sprites: Dictionary = {}
+var wood: int = 0
 
 @export var show_debug: bool = false
 
@@ -73,6 +75,7 @@ func spawnTrees() -> void:
 		sprite.texture = tree_texture
 		sprite.position = gridToWorld(pos) + Vector2(cell_size / 2.0, cell_size / 2.0)
 		add_child(sprite)
+		tree_sprites[pos] = sprite
 
 
 func gridToWorld(_pos: Vector2) -> Vector2:
@@ -85,6 +88,17 @@ func refreshTile(_pos: Vector2) -> void:
 	var data = grid[_pos]
 	set_cell(LAYER_FLOOR, _pos, data.floorData.id, data.floorData.coords)
 	set_cell(LAYER_BUILDING, _pos)
+
+
+func harvest_tree(pos: Vector2) -> void:
+	if not grid.has(pos) or grid[pos].occupier != "Tree":
+		return
+	wood += 1
+	tree_sprites[pos].queue_free()
+	tree_sprites.erase(pos)
+	var cell: CellData = grid[pos]
+	cell.occupier = null
+	cell.navigable = true
 
 
 func enter_placement_mode(info: Dictionary) -> void:
