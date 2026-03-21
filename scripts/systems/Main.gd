@@ -8,7 +8,7 @@ func _ready() -> void:
 	grid.generateGrid()
 	pathfinding.initialize()
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if not grid.placement_mode:
 			var grid_pos = grid.worldToGrid(get_global_mouse_position())
