@@ -6,6 +6,7 @@ extends Node2D
 @onready var gui = $CanvasLayer/GUI
 
 func _ready() -> void:
+	get_viewport().physics_object_picking = true
 	grid.generateGrid()
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
