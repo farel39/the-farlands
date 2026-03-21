@@ -10,7 +10,7 @@ var gui
 var data: UnitData = UnitData.new()
 var path: PackedVector2Array
 var harvest_target: Vector2 = Vector2(-1, -1)
-var task_queue: Array = []
+var task_queue: Array = []  # each entry: { "tree_pos": Vector2 }
 var drafted: bool = false
 
 func _ready() -> void:
@@ -42,22 +42,24 @@ func move(delta: float) -> void:
 		_start_next_task()
 
 
-# Move immediately under direct player control — preserves task queue.
+# Drafted: move immediately, queue preserved but not resumed on arrival.
 func draft_move_to(grid_pos: Vector2) -> void:
 	harvest_target = Vector2(-1, -1)
 	path = _build_path(grid_pos)
 
 
-# Move immediately, clearing all queued tasks.
-func move_to(grid_pos: Vector2) -> void:
-	task_queue.clear()
-	harvest_target = Vector2(-1, -1)
+# Undrafted walk: interrupts current task, re-queues it at the front,
+# then resumes the queue automatically after arriving.
+func interrupt_move_to(grid_pos: Vector2) -> void:
+	if harvest_target != Vector2(-1, -1):
+		task_queue.push_front({"tree_pos": harvest_target})
+		harvest_target = Vector2(-1, -1)
 	path = _build_path(grid_pos)
 
 
-# Add a harvest task to the back of the queue.
-func queue_harvest(dest: Vector2, tree_pos: Vector2) -> void:
-	task_queue.append({"move_to": dest, "harvest_target": tree_pos})
+# Queue a harvest task by tree grid position.
+func queue_harvest(tree_pos: Vector2) -> void:
+	task_queue.append({"tree_pos": tree_pos})
 	if path.is_empty() and not drafted:
 		_start_next_task()
 
@@ -74,8 +76,28 @@ func _start_next_task() -> void:
 	if drafted or task_queue.is_empty():
 		return
 	var task: Dictionary = task_queue.pop_front()
-	harvest_target = task["harvest_target"]
-	path = _build_path(task["move_to"])
+	var tree_pos: Vector2 = task["tree_pos"]
+	var dest := _closest_adjacent(tree_pos)
+	if dest == Vector2(-1, -1):
+		# No reachable adjacent cell — skip this task
+		_start_next_task()
+		return
+	harvest_target = tree_pos
+	path = _build_path(dest)
+
+
+func _closest_adjacent(tree_pos: Vector2) -> Vector2:
+	var best := Vector2(-1, -1)
+	var best_dist := INF
+	var unit_grid := grid.worldToGrid(position)
+	for dir in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
+		var neighbor: Vector2 = tree_pos + dir
+		if grid.grid.has(neighbor) and grid.grid[neighbor].navigable:
+			var d := unit_grid.distance_to(neighbor)
+			if d < best_dist:
+				best_dist = d
+				best = neighbor
+	return best
 
 
 func _build_path(grid_pos: Vector2) -> PackedVector2Array:
