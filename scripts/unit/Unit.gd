@@ -11,7 +11,10 @@ var data: UnitData = UnitData.new()
 var path: PackedVector2Array
 var harvest_target: Vector2 = Vector2(-1, -1)
 var task_queue: Array = []  # each entry: { "tree_pos": Vector2 }
-var drafted: bool = false
+var drafted: bool = false:
+	set(value):
+		drafted = value
+		queue_redraw()
 var selected: bool = false:
 	set(value):
 		selected = value
@@ -23,10 +26,11 @@ func _ready() -> void:
 	gui = grid.get_parent().get_node("CanvasLayer/GUI")
 
 func _draw() -> void:
-	if not selected:
-		return
-	draw_rect(Rect2(0, 0, 128, 128), Color(0.2, 0.8, 0.2, 0.25), true)
-	draw_rect(Rect2(0, 0, 128, 128), Color(0.2, 0.8, 0.2, 1.0), false, 2.0)
+	if drafted:
+		draw_rect(Rect2(0, 0, 128, 128), Color(1.0, 0.6, 0.0, 0.2), true)
+		draw_rect(Rect2(0, 0, 128, 128), Color(1.0, 0.6, 0.0, 1.0), false, 2.0)
+	if selected:
+		draw_rect(Rect2(2, 2, 124, 124), Color(0.2, 0.8, 0.2, 1.0), false, 2.0)
 
 func _process(delta: float) -> void:
 	move(delta)

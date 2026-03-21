@@ -76,7 +76,7 @@ func _handle_click() -> void:
 	# Move command — apply to all selected units in formation
 	if selected_units.is_empty():
 		return
-	var drafted := selected_units.filter(func(u): return u.drafted)
+	var drafted := all_units.filter(func(u): return u.drafted)
 	if drafted.is_empty():
 		return
 	var targets := _formation(grid_pos, drafted.size())

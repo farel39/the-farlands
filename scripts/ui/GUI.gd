@@ -11,6 +11,7 @@ const BUILDINGS = {
 }
 
 var wood_label: Label
+var drafted_label: Label
 
 var _tree_panel: PanelContainer
 var _selected_tree: Vector2
@@ -48,6 +49,10 @@ func _ready() -> void:
 	wood_label = Label.new()
 	wood_label.position = Vector2(8, 8)
 	add_child(wood_label)
+
+	drafted_label = Label.new()
+	drafted_label.position = Vector2(8, 28)
+	add_child(drafted_label)
 
 	# Tree panel
 	_tree_panel = PanelContainer.new()
@@ -190,3 +195,8 @@ func _on_group_draft_pressed() -> void:
 
 func _process(_delta: float) -> void:
 	wood_label.text = "Wood: " + str(grid.wood)
+	var drafted_count := 0
+	for u in grid.get_node("Units").get_children():
+		if u is Unit and u.drafted:
+			drafted_count += 1
+	drafted_label.text = "Drafted: " + str(drafted_count)
