@@ -1,8 +1,8 @@
 class_name Grid
 extends TileMap
 
-@export var width: int = 12
-@export var height: int = 12
+@export var width: int = 25
+@export var height: int = 25
 @export var cell_size: int = 128
 
 var grid: Dictionary = {}
@@ -44,7 +44,7 @@ func spawnTrees() -> void:
 	var tree_texture = load("res://art/tree.png")
 	var placed: Array = []
 	const MIN_DISTANCE = 3
-	const MAX_TREES = 7
+	const MAX_TREES = 20
 
 	var candidates: Array = []
 	for x in range(1, width - 1):
