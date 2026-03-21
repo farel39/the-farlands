@@ -91,5 +91,9 @@ func _build_path(grid_pos: Vector2) -> PackedVector2Array:
 	return world_path
 
 
+func is_busy() -> bool:
+	return not task_queue.is_empty() or harvest_target != Vector2(-1, -1)
+
+
 func get_grid_pos() -> Vector2:
 	return grid.worldToGrid(position)

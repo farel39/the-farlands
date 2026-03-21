@@ -30,7 +30,7 @@ func _unhandled_input(event: InputEvent) -> void:
 					return
 				if unit.drafted:
 					unit.draft_move_to(grid_pos)
-				elif unit.task_queue.is_empty():
+				elif not unit.is_busy():
 					unit.move_to(grid_pos)
 				else:
 					return
