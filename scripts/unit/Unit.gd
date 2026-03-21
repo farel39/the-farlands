@@ -59,7 +59,7 @@ func move(delta: float) -> void:
 # Drafted: move immediately, queue preserved but not resumed on arrival.
 func draft_move_to(grid_pos: Vector2) -> void:
 	harvest_target = Vector2(-1, -1)
-	path = _build_path(grid_pos, false)
+	path = _build_path(grid_pos)
 
 
 # Undrafted walk: interrupts current task, re-queues it at the front,
@@ -121,15 +121,14 @@ func _closest_adjacent(tree_pos: Vector2) -> Vector2:
 	return best
 
 
-func _build_path(grid_pos: Vector2, smooth: bool = true) -> PackedVector2Array:
+func _build_path(grid_pos: Vector2) -> PackedVector2Array:
 	var from := pf.getIDGridPos(pf.getWorldID(position))
 	var grid_path := pf.getPath(from, grid_pos)
 	var world_path := PackedVector2Array()
 	world_path.append(position)
 	for p in grid_path:
 		world_path.append(grid.gridToWorld(p))
-	if smooth:
-		world_path = pf.smoothPath(world_path)
+	world_path = pf.smoothPath(world_path)
 	if not world_path.is_empty():
 		world_path.remove_at(0)
 	return world_path
