@@ -75,11 +75,18 @@ func set_drafted(value: bool) -> void:
 func _start_next_task() -> void:
 	if drafted or task_queue.is_empty():
 		return
-	var task: Dictionary = task_queue.pop_front()
+	var unit_grid := grid.worldToGrid(position)
+	var best_idx := 0
+	var best_dist := INF
+	for i in task_queue.size():
+		var d := unit_grid.distance_to(task_queue[i]["tree_pos"])
+		if d < best_dist:
+			best_dist = d
+			best_idx = i
+	var task: Dictionary = task_queue.pop_at(best_idx)
 	var tree_pos: Vector2 = task["tree_pos"]
 	var dest := _closest_adjacent(tree_pos)
 	if dest == Vector2(-1, -1):
-		# No reachable adjacent cell — skip this task
 		_start_next_task()
 		return
 	harvest_target = tree_pos
