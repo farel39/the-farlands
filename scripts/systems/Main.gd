@@ -76,12 +76,12 @@ func _handle_click() -> void:
 	# Move command — apply to all selected units in formation
 	if selected_units.is_empty():
 		return
-	var targets := _formation(grid_pos, selected_units.size())
-	for i in selected_units.size():
-		if selected_units[i].drafted:
-			selected_units[i].draft_move_to(targets[i])
-		else:
-			selected_units[i].interrupt_move_to(targets[i])
+	var drafted := selected_units.filter(func(u): return u.drafted)
+	if drafted.is_empty():
+		return
+	var targets := _formation(grid_pos, drafted.size())
+	for i in drafted.size():
+		drafted[i].draft_move_to(targets[i])
 
 
 func _finish_box_select() -> void:
