@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="The Farlands"
-run/main_scene="res://scenes/Main/Main.tscn"
+run/main_scene="uid://iexhtbeabs0p"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://art/icon.svg"
 

@@ -126,9 +126,20 @@ func _hasLOS(a: Vector2, b: Vector2) -> bool:
 	var half := Vector2(grid.cell_size, grid.cell_size) * 0.5
 	var a_grid = grid.worldToGrid(a + half)
 	var b_grid = grid.worldToGrid(b + half)
-	for cell in _supercover(a_grid, b_grid):
+	var cells = _supercover(a_grid, b_grid)
+	for cell in cells:
 		if grid.grid.has(cell) and not grid.grid[cell].navigable:
 			return false
+	for i in range(cells.size() - 1):
+		var from_cell: Vector2 = cells[i]
+		var to_cell: Vector2 = cells[i + 1]
+		var step := to_cell - from_cell
+		if step.x != 0 and step.y != 0:
+			var c1 = from_cell + Vector2(step.x, 0)
+			var c2 = from_cell + Vector2(0, step.y)
+			if (grid.grid.has(c1) and not grid.grid[c1].navigable) or \
+			   (grid.grid.has(c2) and not grid.grid[c2].navigable):
+				return false
 	return true
 
 # Supercover DDA: visits every cell the line passes through.
