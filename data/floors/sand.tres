@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="FloorData" format=3 uid="uid://gusifjuti5yb"]
+
+[ext_resource type="Script" uid="uid://3smka053qnh5" path="res://scripts/data/FloorData.gd" id="1_wso5g"]
+
+[resource]
+script = ExtResource("1_wso5g")
+name = "Sand"
+id = 5
+metadata/_custom_type_script = "uid://3smka053qnh5"

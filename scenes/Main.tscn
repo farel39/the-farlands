@@ -9,6 +9,7 @@
 [ext_resource type="Script" uid="uid://cuuf16dly0s6y" path="res://scripts/systems/Pathfinding.gd" id="4_q8kdv"]
 [ext_resource type="Texture2D" uid="uid://cssepkn7tv6tj" path="res://art/missing.png" id="4_yxg74"]
 [ext_resource type="Texture2D" uid="uid://cn2qprvdaisp1" path="res://art/stonewall.png" id="5_gqpea"]
+[ext_resource type="Texture2D" uid="uid://clrt5fxjh8ada" path="res://art/sand.png" id="7_bjd11"]
 [ext_resource type="Texture2D" uid="uid://d3f15xsj1174g" path="res://art/woodwall.png" id="10_krkin"]
 [ext_resource type="Script" uid="uid://dcnsnwm7bloko" path="res://scripts/ui/GUI.gd" id="10_yxg74"]
 
@@ -37,6 +38,11 @@ texture = ExtResource("10_krkin")
 texture_region_size = Vector2i(128, 128)
 0:0/0 = 0
 
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_qmy6f"]
+texture = ExtResource("7_bjd11")
+texture_region_size = Vector2i(128, 128)
+0:0/0 = 0
+
 [sub_resource type="TileSet" id="TileSet_q8kdv"]
 tile_size = Vector2i(128, 128)
 sources/0 = SubResource("TileSetAtlasSource_1jtt4")
@@ -44,6 +50,7 @@ sources/1 = SubResource("TileSetAtlasSource_vup2a")
 sources/2 = SubResource("TileSetAtlasSource_p7wog")
 sources/3 = SubResource("TileSetAtlasSource_0cfwy")
 sources/4 = SubResource("TileSetAtlasSource_wood")
+sources/5 = SubResource("TileSetAtlasSource_qmy6f")
 
 [node name="Main" type="Node2D" unique_id=681001700]
 script = ExtResource("1_8llo8")
@@ -55,8 +62,8 @@ layer_0/name = "floor"
 layer_1/name = "building"
 layer_1/z_index = 1
 layer_2/name = "preview"
-layer_2/z_index = 2
 layer_2/modulate = Color(1, 1, 1, 0.5)
+layer_2/z_index = 2
 script = ExtResource("2_brr1f")
 show_debug = true
 
@@ -181,3 +188,15 @@ offset_top = 40.0
 offset_right = 51.0
 offset_bottom = 63.0
 text = "name"
+
+[node name="TaskButtons" type="Control" parent="CanvasLayer/GUI" unique_id=277803512]
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="CanvasLayer/GUI/TaskButtons" unique_id=1250447755]
+layout_mode = 0
+offset_left = 93.0
+offset_top = 475.0
+offset_right = 194.0
+offset_bottom = 562.0

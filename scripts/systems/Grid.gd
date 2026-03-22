@@ -25,7 +25,7 @@ func generateGrid():
 	for x in width:
 		for y in height:
 			grid[Vector2(x,y)] = CellData.new(Vector2(x, y))
-			grid[Vector2(x,y)].floorData = preload("res://data/floors/grass.tres")
+			grid[Vector2(x,y)].floorData = preload("res://data/floors/sand.tres")
 			refreshTile(Vector2(x,y))
 			if show_debug:
 				var rect = ReferenceRect.new()
