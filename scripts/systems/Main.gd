@@ -4,9 +4,32 @@ extends Node2D
 @onready var pathfinding: Pathfinder = $Grid/Pathfinding
 @onready var unit: Unit = $Grid/Units/Unit
 @onready var gui = $CanvasLayer/GUI
+@onready var canvas_modulate: CanvasModulate = $CanvasModulate
 
 var all_units: Array = []
 var selected_units: Array = []
+var pending_tasks: Array = []
+
+const DAY_DURATION := 120.0  # seconds per full day
+var day_time: float = 0.25   # start at midday (0=dawn, 0.25=day, 0.5=dusk, 0.75=night)
+
+# Color keyframes: [time, color]
+const SKY_COLORS: Array = [
+	[0.00, Color(0.40, 0.30, 0.60)],  # dawn  - soft purple
+	[0.25, Color(0.85, 0.90, 1.00)],  # day   - cool blue-white
+	[0.50, Color(0.25, 0.20, 0.50)],  # dusk  - deep purple
+	[0.75, Color(0.03, 0.03, 0.15)],  # night - dark indigo
+	[1.00, Color(0.40, 0.30, 0.60)],  # dawn again
+]
+
+func _sky_color_at(t: float) -> Color:
+	for i in range(SKY_COLORS.size() - 1):
+		var a: Array = SKY_COLORS[i]
+		var b: Array = SKY_COLORS[i + 1]
+		if t <= b[0]:
+			var f: float = (t - a[0]) / (b[0] - a[0])
+			return (a[1] as Color).lerp(b[1], f)
+	return SKY_COLORS[0][1]
 
 var _press_pos: Vector2 = Vector2.ZERO
 var _dragging: bool = false
@@ -20,12 +43,14 @@ func _ready() -> void:
 
 func _spawn_units() -> void:
 	all_units.append(unit)
+	unit.became_idle.connect(_assign_tasks)
 	var unit_scene := preload("res://scenes/Unit.tscn")
 	for i in 2:
 		var u: Unit = unit_scene.instantiate()
 		u.position = grid.gridToWorld(Vector2(i + 1, 0))
 		$Grid/Units.add_child(u)
 		all_units.append(u)
+		u.became_idle.connect(_assign_tasks)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -67,7 +92,7 @@ func _handle_click() -> void:
 
 	var cell: CellData = grid.grid[grid_pos]
 	if cell.occupier == "Tree":
-		gui.show_tree_panel(grid_pos, mouse_screen)
+		gui.show_tree_panel(grid.get_tree_root(grid_pos), mouse_screen)
 		return
 
 	if not cell.navigable:
@@ -120,10 +145,28 @@ func _formation(center: Vector2, count: int) -> Array:
 
 
 func _on_cut_requested(grid_pos: Vector2) -> void:
-	var targets := selected_units if not selected_units.is_empty() else all_units
-	for u in targets:
-		u.queue_harvest(grid_pos)
+	pending_tasks.append(grid_pos)
+	_assign_tasks()
 
 
-func _process(_delta: float) -> void:
-	pass
+func _assign_tasks() -> void:
+	while not pending_tasks.is_empty():
+		var idle := all_units.filter(func(u): return not u.drafted and not u.is_busy())
+		if idle.is_empty():
+			break
+		var task: Vector2 = pending_tasks[0]
+		var closest: Unit = idle[0]
+		for u in idle:
+			if u.get_grid_pos().distance_to(task) < closest.get_grid_pos().distance_to(task):
+				closest = u
+		pending_tasks.remove_at(0)
+		closest.queue_harvest(task)
+
+
+func _process(delta: float) -> void:
+	day_time = fmod(day_time + delta / DAY_DURATION, 1.0)
+	var sky := _sky_color_at(day_time)
+	canvas_modulate.color = sky
+	# Lights fade in as the sky darkens (v is HSV brightness, 0=dark, 1=bright)
+	var night_factor := 1.0 - sky.v
+	grid.set_tree_light_energy(night_factor * 0.4)

@@ -2,6 +2,7 @@ class_name Unit
 extends Area2D
 
 signal unitSelected(obj)
+signal became_idle
 
 var grid: Grid
 var pf: Pathfinder
@@ -87,7 +88,10 @@ func set_drafted(value: bool) -> void:
 
 
 func _start_next_task() -> void:
-	if drafted or task_queue.is_empty():
+	if drafted:
+		return
+	if task_queue.is_empty():
+		became_idle.emit()
 		return
 	var unit_grid := grid.worldToGrid(position)
 	var best_idx := 0
@@ -107,17 +111,21 @@ func _start_next_task() -> void:
 	path = _build_path(dest)
 
 
-func _closest_adjacent(tree_pos: Vector2) -> Vector2:
+func _closest_adjacent(tree_root: Vector2) -> Vector2:
 	var best := Vector2(-1, -1)
 	var best_dist := INF
 	var unit_grid := grid.worldToGrid(position)
-	for dir in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
-		var neighbor: Vector2 = tree_pos + dir
-		if grid.grid.has(neighbor) and grid.grid[neighbor].navigable:
-			var d := unit_grid.distance_to(neighbor)
-			if d < best_dist:
-				best_dist = d
-				best = neighbor
+	# Scan all cells surrounding the 3x3 footprint
+	for dx in range(-1, 4):
+		for dy in range(-1, 4):
+			if dx >= 0 and dx <= 2 and dy >= 0 and dy <= 2:
+				continue  # skip the 3x3 interior
+			var neighbor := tree_root + Vector2(dx, dy)
+			if grid.grid.has(neighbor) and grid.grid[neighbor].navigable:
+				var d := unit_grid.distance_to(neighbor)
+				if d < best_dist:
+					best_dist = d
+					best = neighbor
 	return best
 
 

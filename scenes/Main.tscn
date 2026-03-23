@@ -55,6 +55,8 @@ sources/5 = SubResource("TileSetAtlasSource_qmy6f")
 [node name="Main" type="Node2D" unique_id=681001700]
 script = ExtResource("1_8llo8")
 
+[node name="CanvasModulate" type="CanvasModulate" parent="."]
+
 [node name="Grid" type="TileMap" parent="." unique_id=368783109]
 tile_set = SubResource("TileSet_q8kdv")
 format = 2
@@ -68,6 +70,8 @@ script = ExtResource("2_brr1f")
 show_debug = true
 
 [node name="Debug" type="Node2D" parent="Grid" unique_id=2025527084]
+
+[node name="Water" type="Node2D" parent="Grid"]
 
 [node name="Units" type="Node2D" parent="Grid" unique_id=1831316446]
 

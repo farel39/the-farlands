@@ -112,6 +112,12 @@ func _ready() -> void:
 	$ConstructButtons/HBoxContainer/StoneWall.pressed.connect(_on_stone_wall_pressed)
 	$ConstructButtons/HBoxContainer/DirtFloor.pressed.connect(_on_dirt_floor_pressed)
 
+	var grid_btn := Button.new()
+	grid_btn.text = "Grid"
+	grid_btn.toggle_mode = true
+	grid_btn.pressed.connect(func(): grid.toggle_debug())
+	$BaseButtons/HBoxContainer.add_child(grid_btn)
+
 
 func _draw() -> void:
 	if not _sel_box_active:

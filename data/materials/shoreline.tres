@@ -1,0 +1,15 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[ext_resource type="Shader" path="res://art/water.gdshader" id="1_water"]
+
+[resource]
+shader = ExtResource("1_water")
+shader_parameter/water_color = Color(0.18, 0.769, 0.627, 1)
+shader_parameter/ripple_speed = 1.0
+shader_parameter/ripple_scale = 3.0
+shader_parameter/ripple_strength = 0.018
+shader_parameter/glint_intensity = 0.1
+shader_parameter/alpha = 0.55
+shader_parameter/shoreline_blend = 1.0
+shader_parameter/shoreline_position = 0.5
+shader_parameter/shoreline_softness = 0.12
