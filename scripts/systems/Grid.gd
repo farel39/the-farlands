@@ -84,8 +84,11 @@ func spawnTrees() -> void:
 				candidates.append(p)
 	candidates.shuffle()
 
+	# PASS 1: select placements, collect all dirt into dirt_tiles, mark tree footprints
+	var tree_data: Array = []  # Array of {pos, local_dirt}
+
 	for pos in candidates:
-		if placed.size() >= MAX_TREES:
+		if tree_data.size() >= MAX_TREES:
 			break
 		if pos.distance_to(Vector2(0, 0)) < MIN_DISTANCE:
 			continue
@@ -112,53 +115,68 @@ func spawnTrees() -> void:
 
 		placed.append(pos)
 
-		# --- Dirt patch (two-pass for rounded edges) ---
 		var centre: Vector2 = pos + Vector2(1.0, 1.0)
-		const DIRT_RADIUS := 3.8
+		const DIRT_RADIUS := 6.5
 		var local_dirt: Dictionary = {}
 
-		for dx in range(-5, 6):
-			for dy in range(-5, 6):
+		for dx in range(-8, 9):
+			for dy in range(-8, 9):
 				var c := Vector2(centre.x + dx, centre.y + dy)
-				if not grid.has(c) or water_tiles.has(c):
+				if not grid.has(c) or water_tiles.has(c) or grid[c].occupier != null:
 					continue
 				var dist := Vector2(float(dx), float(dy)).length()
 				var paint := false
-				if dist <= 2.2:
+				if dist <= 3.0:
 					paint = true
 				else:
-					var prob := pow(max(0.0, 1.0 - (dist - 2.2) / (DIRT_RADIUS - 2.2)), 0.5)
+					var prob := pow(max(0.0, 1.0 - (dist - 3.0) / (DIRT_RADIUS - 3.0)), 0.5)
 					paint = rng.randf() < prob
 				if paint:
 					local_dirt[c] = true
 					dirt_tiles[c] = true
 
-		var dirt_tex := load("res://art/alien dirt.png")
-		var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
-		for c in local_dirt:
-			var mask := 0
-			if local_dirt.has(c + Vector2(0, -1)): mask |= 1
-			if local_dirt.has(c + Vector2(1,  0)): mask |= 2
-			if local_dirt.has(c + Vector2(0,  1)): mask |= 4
-			if local_dirt.has(c + Vector2(-1, 0)): mask |= 8
-			if mask == 15:
-				set_cell(LAYER_FLOOR, Vector2i(int(c.x), int(c.y)), 6, Vector2i(0, 0))
-			else:
-				var mat: ShaderMaterial = dirt_base_mat.duplicate()
-				mat.set_shader_parameter("cardinal_mask", mask)
-				var dirt_sprite := Sprite2D.new()
-				dirt_sprite.texture = dirt_tex
-				dirt_sprite.position = gridToWorld(c) + Vector2(cell_size * 0.5, cell_size * 0.5)
-				dirt_sprite.material = mat
-				add_child(dirt_sprite)
-
-		# Mark all 9 cells as occupied
+		# Mark footprint occupied immediately so later trees' dirt avoids it
 		for dx in 3:
 			for dy in 3:
 				var c: Vector2 = pos + Vector2(dx, dy)
 				grid[c].occupier = "Tree"
 				grid[c].navigable = false
 				_tree_root[c] = pos
+
+		tree_data.append({pos = pos, local_dirt = local_dirt})
+
+	# PASS 2: render all dirt using the complete global dirt_tiles for correct masks.
+	# Use Sprite2D for every tile (no set_cell) so z-ordering is consistent.
+	var dirt_tex := load("res://art/alien dirt.png")
+	var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
+
+	for c in dirt_tiles:
+		var mask := 0
+		if dirt_tiles.has(c + Vector2(0, -1)): mask |= 1
+		if dirt_tiles.has(c + Vector2(1,  0)): mask |= 2
+		if dirt_tiles.has(c + Vector2(0,  1)): mask |= 4
+		if dirt_tiles.has(c + Vector2(-1, 0)): mask |= 8
+		var diag := 0
+		if dirt_tiles.has(c + Vector2( 1, -1)): diag |= 1  # NE
+		if dirt_tiles.has(c + Vector2( 1,  1)): diag |= 2  # SE
+		if dirt_tiles.has(c + Vector2(-1,  1)): diag |= 4  # SW
+		if dirt_tiles.has(c + Vector2(-1, -1)): diag |= 8  # NW
+		var dirt_sprite := Sprite2D.new()
+		dirt_sprite.texture = dirt_tex
+		dirt_sprite.position = gridToWorld(c) + Vector2(cell_size * 0.5, cell_size * 0.5)
+		if mask < 15 or diag < 15:
+			var mat: ShaderMaterial = dirt_base_mat.duplicate()
+			mat.set_shader_parameter("cardinal_mask", mask)
+			mat.set_shader_parameter("diag_mask", diag)
+			dirt_sprite.material = mat
+		add_child(dirt_sprite)
+
+	# PASS 3: spawn tree sprites, lights, and lily pads
+	var lily_tex := load("res://art/alien lily pad plant.png")
+
+	for td in tree_data:
+		var pos: Vector2 = td.pos
+		var local_dirt: Dictionary = td.local_dirt
 
 		var sprite := Sprite2D.new()
 		sprite.texture = tree_texture
@@ -174,6 +192,32 @@ func spawnTrees() -> void:
 		tree_lights.append(light)
 
 		tree_sprites[pos] = sprite
+
+		# Scatter lily pad plants across the dirt patch
+		var lily_candidates: Array = local_dirt.keys()
+		lily_candidates.shuffle()
+		var lily_count := rng.randi_range(4, 7)
+		var lily_placed := 0
+		for lc in lily_candidates:
+			if lily_placed >= lily_count:
+				break
+			if not grid.has(lc) or grid[lc].occupier != null:
+				continue
+			var lily := Sprite2D.new()
+			lily.texture = lily_tex
+			lily.position = gridToWorld(lc) + Vector2(cell_size * 0.5, cell_size * 0.5)
+			lily.scale = Vector2(0.25, 0.25)
+			lily.z_index = 1
+			add_child(lily)
+			var lily_light := PointLight2D.new()
+			lily_light.texture = light_texture
+			lily_light.color = Color(0.3, 1.0, 0.7)
+			lily_light.energy = 0.0
+			lily_light.texture_scale = 4.5
+			lily.add_child(lily_light)
+			tree_lights.append(lily_light)
+			grid[lc].occupier = "LilyPad"
+			lily_placed += 1
 
 
 func spawnRocks() -> void:
@@ -263,6 +307,232 @@ func spawnRocks() -> void:
 			pebble.position = gridToWorld(pebble_cell) + Vector2(cell_size * 0.5, cell_size * 0.5)
 			pebble.z_index = 0
 			add_child(pebble)
+
+
+func spawnTidePools() -> void:
+	var pool_textures: Array = [
+		load("res://art/tide pool 1 tile var 1.png"),
+		load("res://art/tide pool 1 tile var 2.png"),
+		load("res://art/tide pool 1 tile var 3.png"),
+	]
+	var rock_tex   = load("res://art/tide pool rock.png")
+	var iron_tex   = load("res://art/iron ore.png")
+	var copper_tex = load("res://art/copper ore.png")
+
+	const POOL_SIZE       = 2
+	const SHORE_BAND      = 6
+	const SPRITE_SCALE    = 0.125
+	const MIN_CLUSTER_DIST = 20
+
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	var shore_y: int = height / 2
+
+	# All shore-band candidates, shuffled once and reused across cluster attempts
+	var all_candidates: Array = []
+	for x in range(0, width - POOL_SIZE):
+		for y in range(shore_y - SHORE_BAND, shore_y):
+			all_candidates.append(Vector2(x, y))
+	all_candidates.shuffle()
+
+	var S: float             = cell_size * 2.0
+	var light_tex            := _make_light_texture()
+	var ring_offsets: Array  = [
+		Vector2(0,-S), Vector2(S,0), Vector2(0,S), Vector2(-S,0),
+		Vector2(-S,-S), Vector2(S,-S), Vector2(-S,S), Vector2(S,S),
+	]
+	var extra_side_offsets: Array = [
+		[Vector2(-S,-S*2), Vector2(0,-S*2), Vector2(S,-S*2)],
+		[Vector2(S*2,-S),  Vector2(S*2,0),  Vector2(S*2,S) ],
+		[Vector2(-S,S*2),  Vector2(0,S*2),  Vector2(S,S*2) ],
+		[Vector2(-S*2,-S), Vector2(-S*2,0), Vector2(-S*2,S)],
+	]
+	var adj_offsets: Array = [Vector2(2,0), Vector2(-2,0), Vector2(0,2), Vector2(0,-2)]
+
+	var placed_anchors: Array    = []   # grid positions of placed cluster anchors
+	var global_footprints: Dictionary = {}  # all occupied pool cells across clusters
+
+	var target_clusters: int = rng.randi_range(2, 3)
+
+	for _cluster in range(target_clusters):
+		# --- Find anchor far from existing clusters ---
+		var anchor := Vector2(-1, -1)
+		for candidate in all_candidates:
+			var ok: bool = true
+			# Must be free and not water
+			for dx in POOL_SIZE:
+				for dy in POOL_SIZE:
+					var c: Vector2 = candidate + Vector2(dx, dy)
+					if not grid.has(c) or grid[c].occupier != null or water_tiles.has(c) or global_footprints.has(c):
+						ok = false
+						break
+				if not ok:
+					break
+			if not ok:
+				continue
+			# Must be far enough from every other cluster
+			for pa in placed_anchors:
+				if candidate.distance_to(pa) < MIN_CLUSTER_DIST:
+					ok = false
+					break
+			if ok:
+				anchor = candidate
+				break
+		if anchor == Vector2(-1, -1):
+			continue
+
+		placed_anchors.append(anchor)
+
+		# --- Grow cluster of 2–3 pools ---
+		var pool_count: int    = rng.randi_range(2, 3)
+		var pool_positions: Array = [anchor]
+		var pool_footprints: Dictionary = {}
+		for dx in POOL_SIZE:
+			for dy in POOL_SIZE:
+				pool_footprints[anchor + Vector2(dx, dy)] = true
+
+		for _i in range(20):
+			if pool_positions.size() >= pool_count:
+				break
+			var base: Vector2 = pool_positions[rng.randi() % pool_positions.size()]
+			adj_offsets.shuffle()
+			for off in adj_offsets:
+				var off_vec: Vector2 = off
+				var np: Vector2 = base + off_vec
+				var ok: bool = true
+				for dx in POOL_SIZE:
+					for dy in POOL_SIZE:
+						var c: Vector2 = np + Vector2(dx, dy)
+						if not grid.has(c) or grid[c].occupier != null or water_tiles.has(c) or pool_footprints.has(c) or global_footprints.has(c):
+							ok = false
+							break
+					if not ok:
+						break
+				if ok:
+					pool_positions.append(np)
+					for dx in POOL_SIZE:
+						for dy in POOL_SIZE:
+							pool_footprints[np + Vector2(dx, dy)] = true
+					break
+
+		# Register footprints globally
+		for k in pool_footprints:
+			global_footprints[k] = true
+
+		# Pool centres in world space
+		var pool_centres: Dictionary = {}
+		for pp in pool_positions:
+			pool_centres[gridToWorld(pp) + Vector2(cell_size, cell_size)] = true
+
+		# Wet-sand underlay: soft dark radial gradient centered on the cluster,
+		# large enough to extend well past the rock ring so edges dissolve into sand.
+		var cluster_centre: Vector2 = Vector2.ZERO
+		for pp in pool_positions:
+			cluster_centre += gridToWorld(pp) + Vector2(cell_size, cell_size)
+		cluster_centre /= pool_positions.size()
+
+		var wet_gradient := Gradient.new()
+		wet_gradient.set_color(0, Color(0.18, 0.14, 0.10, 0.55))
+		wet_gradient.set_color(1, Color(0.18, 0.14, 0.10, 0.0))
+		var wet_tex := GradientTexture2D.new()
+		wet_tex.gradient = wet_gradient
+		wet_tex.fill = GradientTexture2D.FILL_RADIAL
+		wet_tex.fill_from = Vector2(0.5, 0.5)
+		wet_tex.fill_to  = Vector2(1.0, 0.5)
+		wet_tex.width  = 256
+		wet_tex.height = 256
+		var wet_sprite := Sprite2D.new()
+		wet_sprite.texture = wet_tex
+		wet_sprite.position = cluster_centre
+		wet_sprite.scale = Vector2(8.0, 8.0)   # ~1024px radius — well past the outer rock ring
+		wet_sprite.z_index = 0
+		add_child(wet_sprite)
+
+		# Mark occupiers and spawn pool sprites — shuffle textures so each pool differs
+		var shuffled_textures: Array = pool_textures.duplicate()
+		shuffled_textures.shuffle()
+		for pi in pool_positions.size():
+			var pp: Vector2 = pool_positions[pi]
+			for dx in POOL_SIZE:
+				for dy in POOL_SIZE:
+					var c: Vector2 = pp + Vector2(dx, dy)
+					grid[c].occupier = "TidePool"
+					grid[c].navigable = false
+			var cp: Vector2 = gridToWorld(pp) + Vector2(cell_size, cell_size)
+			var pool_sprite := Sprite2D.new()
+			pool_sprite.texture = shuffled_textures[pi % 3]
+			pool_sprite.position = cp
+			pool_sprite.scale = Vector2(1.0, 1.0)  # 256px tex → 256px rendered (2 tiles)
+			pool_sprite.z_index = 0
+			add_child(pool_sprite)
+			var light := PointLight2D.new()
+			light.texture = light_tex
+			light.color = Color(0.1, 0.85, 1.0)
+			light.energy = 0.0
+			light.texture_scale = 5.5
+			pool_sprite.add_child(light)
+			tree_lights.append(light)
+
+		# Pass 1: collect rock positions (skip any that fall outside the map)
+		var rock_positions: Dictionary = {}
+		for pp in pool_positions:
+			var cp: Vector2 = gridToWorld(pp) + Vector2(cell_size, cell_size)
+			for ro in ring_offsets:
+				var ro_vec: Vector2 = ro
+				var rp: Vector2 = cp + ro_vec
+				if not pool_centres.has(rp) and grid.has(worldToGrid(rp)):
+					rock_positions[rp] = true
+			for side_opts in extra_side_offsets:
+				var opts: Array = side_opts
+				var ext: Vector2 = opts[rng.randi() % 3]
+				var ep: Vector2 = cp + ext
+				if not pool_centres.has(ep) and grid.has(worldToGrid(ep)):
+					rock_positions[ep] = true
+
+		# Pass 2: spawn rocks — fade only on sand-facing sides
+		var fade_shader := load("res://art/tide_pool_rock.gdshader") as Shader
+		for rp_key in rock_positions:
+			var rp: Vector2 = rp_key
+			var mask: int = 0
+			if pool_centres.has(rp+Vector2(0,-S)) or rock_positions.has(rp+Vector2(0,-S)): mask |= 1
+			if pool_centres.has(rp+Vector2(S, 0)) or rock_positions.has(rp+Vector2(S, 0)): mask |= 2
+			if pool_centres.has(rp+Vector2(0, S)) or rock_positions.has(rp+Vector2(0, S)): mask |= 4
+			if pool_centres.has(rp+Vector2(-S,0)) or rock_positions.has(rp+Vector2(-S,0)): mask |= 8
+			var rock_sprite := Sprite2D.new()
+			rock_sprite.texture = rock_tex
+			rock_sprite.position = rp
+			rock_sprite.scale = Vector2(1.0, 1.0)  # 256px tex → 256px rendered (2 tiles)
+			rock_sprite.z_index = 0
+			var rock_mat := ShaderMaterial.new()
+			rock_mat.shader = fade_shader
+			rock_mat.set_shader_parameter("cardinal_mask", mask)
+			rock_mat.set_shader_parameter("fade_width", 0.3)
+			rock_sprite.material = rock_mat
+			add_child(rock_sprite)
+			var rock_gc: Vector2 = worldToGrid(rp)
+			if grid.has(rock_gc):
+				grid[rock_gc].occupier = "TidePoolRock"
+
+		# Scatter iron and copper ore on a random subset of rock positions
+		var ore_candidates: Array = rock_positions.keys()
+		ore_candidates.shuffle()
+		var ore_count: int = rng.randi_range(2, 3)
+		var used_ore_cells: Dictionary = {}
+		for i in min(ore_count * 2, ore_candidates.size()):
+			if used_ore_cells.size() >= ore_count * 2:
+				break
+			var ore_pos: Vector2 = ore_candidates[i]
+			var gc: Vector2 = worldToGrid(ore_pos)
+			if not grid.has(gc) or water_tiles.has(gc) or used_ore_cells.has(gc):
+				continue
+			used_ore_cells[gc] = true
+			var ore_sprite := Sprite2D.new()
+			ore_sprite.texture = iron_tex if used_ore_cells.size() <= ore_count else copper_tex
+			ore_sprite.position = gridToWorld(gc) + Vector2(cell_size * 0.5, cell_size * 0.5)
+			ore_sprite.scale = Vector2(1.0, 1.0)
+			ore_sprite.z_index = 0
+			add_child(ore_sprite)
 
 
 func get_tree_root(pos: Vector2) -> Vector2:

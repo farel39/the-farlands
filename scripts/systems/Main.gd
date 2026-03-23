@@ -38,10 +38,12 @@ const DRAG_THRESHOLD := 8.0
 func _ready() -> void:
 	grid.generateGrid()
 	_place_water()
+	grid.spawnTidePools()
 	grid.spawnTrees()
 	grid.spawnRocks()
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
+	$Grid/Units.z_index = 1
 	_spawn_units()
 
 
