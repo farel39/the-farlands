@@ -86,13 +86,26 @@ func _place_water() -> void:
 		water_node.add_child(rect)
 
 func _spawn_units() -> void:
-	all_units.append(unit)
-	unit.became_idle.connect(_assign_tasks)
+	var chars: Array = [
+		["res://art/the engineer downward.png", "res://art/the engineer sideway.png"],
+		["res://art/the medic downward.png",    "res://art/the medic sideway.png"],
+		["res://art/the pilot downward.png",    "res://art/the pilot sideway.png"],
+	]
+
 	var unit_scene := preload("res://scenes/Unit.tscn")
+	var units_to_setup: Array = [unit]
+
 	for i in 2:
 		var u: Unit = unit_scene.instantiate()
 		u.position = grid.gridToWorld(Vector2(i + 1, 0))
 		$Grid/Units.add_child(u)
+		units_to_setup.append(u)
+
+	for i in units_to_setup.size():
+		var u: Unit = units_to_setup[i]
+		var down_tex := load(chars[i][0]) as Texture2D
+		var side_tex := load(chars[i][1]) as Texture2D
+		u.set_character_textures(down_tex, side_tex)
 		all_units.append(u)
 		u.became_idle.connect(_assign_tasks)
 

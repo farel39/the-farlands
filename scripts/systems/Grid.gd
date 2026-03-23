@@ -209,7 +209,7 @@ func spawnTrees() -> void:
 			lily.texture = lily_tex
 			lily.position = gridToWorld(lc) + Vector2(cell_size * 0.5, cell_size * 0.5)
 			lily.scale = Vector2(0.25, 0.25)
-			lily.z_index = 1
+			lily.z_index = 0
 			add_child(lily)
 			var lily_light := PointLight2D.new()
 			lily_light.texture = light_texture
@@ -323,6 +323,40 @@ func spawnCrashSite() -> void:
 
 			hull_placed += 1
 
+	# --- Scatter supply crates near the crash ship ---
+	if ship_pos != Vector2(-1, -1):
+		var crate_tex := load("res://art/supply crate.png") as Texture2D
+		var crate_scale := float(cell_size) / float(crate_tex.get_width())
+		var crate_count := rng.randi_range(2, 4)
+		var crate_placed := 0
+		for attempt in 80:
+			if crate_placed >= crate_count:
+				break
+			var cx: int = rng.randi_range(-5, 5)
+			var cy: int = rng.randi_range(-4, 4)
+			var cp := ship_pos + Vector2(cx, cy)
+			if not grid.has(cp) or grid[cp].occupier != null or water_tiles.has(cp):
+				continue
+
+			grid[cp].occupier = "SupplyCrate"
+
+			var crate_world := gridToWorld(cp) + Vector2(cell_size * 0.5, cell_size * 0.5)
+			var crate_shadow := Sprite2D.new()
+			crate_shadow.texture = crate_tex
+			crate_shadow.position = crate_world + Vector2(8, 10)
+			crate_shadow.scale = Vector2(crate_scale * 1.1, crate_scale * 0.55)
+			crate_shadow.modulate = Color(0, 0, 0, 0.35)
+			add_child(crate_shadow)
+			shadow_sprites.append(crate_shadow)
+
+			var crate_sprite := Sprite2D.new()
+			crate_sprite.texture = crate_tex
+			crate_sprite.scale = Vector2(crate_scale, crate_scale)
+			crate_sprite.position = crate_world
+			add_child(crate_sprite)
+
+			crate_placed += 1
+
 
 func spawnDriftwood() -> void:
 	var textures: Array = [
@@ -387,6 +421,7 @@ func spawnDriftwood() -> void:
 		add_child(sprite)
 
 		grid[cell].occupier = "Driftwood"
+		grid[cell].navigable = false
 		placed_cells.append(cell)
 		placed += 1
 
@@ -879,6 +914,8 @@ func spawnTidePools() -> void:
 			if not grid.has(gc) or water_tiles.has(gc) or used_ore_cells.has(gc):
 				continue
 			used_ore_cells[gc] = true
+			grid[gc].occupier = "Ore"
+			grid[gc].navigable = false
 			var ore_tex: Texture2D = iron_tex if used_ore_cells.size() <= ore_count else copper_tex
 			var ore_pos2: Vector2 = gridToWorld(gc) + Vector2(cell_size * 0.5, cell_size * 0.5)
 

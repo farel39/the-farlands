@@ -11,6 +11,9 @@ var gui
 var data: UnitData = UnitData.new()
 var path: PackedVector2Array
 var harvest_target: Vector2 = Vector2(-1, -1)
+
+var _tex_down: Texture2D = null
+var _tex_side: Texture2D = null
 var task_queue: Array = []  # each entry: { "tree_pos": Vector2 }
 var drafted: bool = false:
 	set(value):
@@ -25,6 +28,21 @@ func _ready() -> void:
 	grid = get_parent().get_parent() as Grid
 	pf = grid.get_node("Pathfinding")
 	gui = grid.get_parent().get_node("CanvasLayer/GUI")
+
+
+func set_character_textures(down: Texture2D, side: Texture2D) -> void:
+	_tex_down = down
+	_tex_side = side
+	_apply_sprite(down, false)
+
+
+func _apply_sprite(tex: Texture2D, flip_h: bool) -> void:
+	var sprite := get_node("Sprite2D") as Sprite2D
+	sprite.texture = tex
+	sprite.flip_h = flip_h
+	sprite.flip_v = false
+	var s := float(grid.cell_size) / float(tex.get_width())
+	sprite.scale = Vector2(s, s)
 
 func _draw() -> void:
 	if drafted:
@@ -43,6 +61,12 @@ func move(delta: float) -> void:
 	while remaining > 0.0 and not path.is_empty():
 		var to_next := path[0] - position
 		var dist := to_next.length()
+		if _tex_down and _tex_side:
+			var dir := to_next.normalized()
+			if abs(dir.x) > abs(dir.y):
+				_apply_sprite(_tex_side, dir.x < 0)
+			else:
+				_apply_sprite(_tex_down, false)
 		if dist <= remaining:
 			position = path[0]
 			path.remove_at(0)
