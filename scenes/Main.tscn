@@ -12,6 +12,7 @@
 [ext_resource type="Texture2D" uid="uid://clrt5fxjh8ada" path="res://art/sand.png" id="7_bjd11"]
 [ext_resource type="Texture2D" uid="uid://d3f15xsj1174g" path="res://art/woodwall.png" id="10_krkin"]
 [ext_resource type="Script" uid="uid://dcnsnwm7bloko" path="res://scripts/ui/GUI.gd" id="10_yxg74"]
+[ext_resource type="Texture2D" path="res://art/alien dirt.png" id="11_adirt"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1jtt4"]
 texture = ExtResource("2_r0gd4")
@@ -43,6 +44,11 @@ texture = ExtResource("7_bjd11")
 texture_region_size = Vector2i(128, 128)
 0:0/0 = 0
 
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_adirt"]
+texture = ExtResource("11_adirt")
+texture_region_size = Vector2i(128, 128)
+0:0/0 = 0
+
 [sub_resource type="TileSet" id="TileSet_q8kdv"]
 tile_size = Vector2i(128, 128)
 sources/0 = SubResource("TileSetAtlasSource_1jtt4")
@@ -51,6 +57,7 @@ sources/2 = SubResource("TileSetAtlasSource_p7wog")
 sources/3 = SubResource("TileSetAtlasSource_0cfwy")
 sources/4 = SubResource("TileSetAtlasSource_wood")
 sources/5 = SubResource("TileSetAtlasSource_qmy6f")
+sources/6 = SubResource("TileSetAtlasSource_adirt")
 
 [node name="Main" type="Node2D" unique_id=681001700]
 script = ExtResource("1_8llo8")

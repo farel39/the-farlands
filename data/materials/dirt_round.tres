@@ -1,0 +1,8 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[ext_resource type="Shader" path="res://art/dirt_round.gdshader" id="1_drtrd"]
+
+[resource]
+shader = ExtResource("1_drtrd")
+shader_parameter/cardinal_mask = 15
+shader_parameter/radius = 0.32

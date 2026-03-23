@@ -37,9 +37,48 @@ const DRAG_THRESHOLD := 8.0
 
 func _ready() -> void:
 	grid.generateGrid()
+	_place_water()
+	grid.spawnTrees()
+	grid.spawnRocks()
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
 	_spawn_units()
+
+
+func _place_water() -> void:
+	# Bottom half of the map is water (y >= height / 2).
+	# One ColorRect per row (not per tile) — 125 nodes instead of 31 250.
+	var shore_y: int = grid.height / 2
+	var water_rows := float(grid.height - shore_y - 1)
+
+	var base_mat := load("res://data/materials/shallow_water.tres") as ShaderMaterial
+	var shoreline_mat := load("res://data/materials/shoreline.tres") as ShaderMaterial
+	var water_node: Node2D = grid.get_node("Water")
+	var row_width: float = float(grid.width * grid.cell_size)
+
+	# Mark every water cell in the grid dict so trees/rocks avoid them.
+	for x in grid.width:
+		for y in range(shore_y, grid.height):
+			grid.water_tiles[Vector2(x, y)] = true
+
+	# Create one ColorRect per row with a smoothstepped alpha gradient.
+	for y in range(shore_y, grid.height):
+		var depth := y - shore_y
+		var mat: ShaderMaterial
+		if depth == 0:
+			mat = shoreline_mat.duplicate()
+		else:
+			var t := smoothstep(0.0, 1.0, float(depth - 1) / water_rows)
+			mat = base_mat.duplicate()
+			mat.set_shader_parameter("alpha", lerpf(0.08, 0.18, t))
+		mat.set_shader_parameter("uv_tile_scale", float(grid.width))
+
+		var rect := ColorRect.new()
+		rect.size = Vector2(row_width, float(grid.cell_size))
+		rect.position = Vector2(0.0, float(y * grid.cell_size))
+		rect.material = mat
+		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		water_node.add_child(rect)
 
 func _spawn_units() -> void:
 	all_units.append(unit)

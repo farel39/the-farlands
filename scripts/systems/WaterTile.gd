@@ -34,3 +34,8 @@ func _ready() -> void:
 
 func _apply_material() -> void:
 	_rect.material = load(_MATERIAL_PATHS[variant]) as ShaderMaterial
+
+
+## Override the material directly — used for smooth per-row alpha gradients.
+func apply_material(mat: ShaderMaterial) -> void:
+	_rect.material = mat

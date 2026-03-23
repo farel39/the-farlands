@@ -1,8 +1,8 @@
 class_name Grid
 extends TileMap
 
-@export var width: int = 25
-@export var height: int = 25
+@export var width: int = 100
+@export var height: int = 100
 @export var cell_size: int = 128
 
 var grid: Dictionary = {}
@@ -11,7 +11,8 @@ var tree_lights: Array = []
 var _tree_root: Dictionary = {}  # maps any tree cell → its root (top-left) pos
 var wood: int = 0
 
-var water_tiles: Dictionary = {}  # Vector2 → WaterTile node
+var water_tiles: Dictionary = {}  # Vector2 → WaterTile node or true
+var dirt_tiles: Dictionary = {}   # Vector2 → true  (all cells that are alien dirt)
 
 const _WATER_TILE_SCENE = preload("res://scenes/WaterTile.tscn")
 
@@ -31,17 +32,6 @@ func generateGrid():
 			grid[Vector2(x,y)] = CellData.new(Vector2(x, y))
 			grid[Vector2(x,y)].floorData = preload("res://data/floors/sand.tres")
 			refreshTile(Vector2(x,y))
-			var rect = ReferenceRect.new()
-			rect.position = gridToWorld(Vector2(x,y))
-			rect.size = Vector2(cell_size, cell_size)
-			rect.editor_only = false
-			$Debug.add_child(rect)
-			var label = Label.new()
-			label.position = gridToWorld(Vector2(x, y))
-			label.text = str(Vector2(x, y))
-			$Debug.add_child(label)
-	$Debug.visible = false
-	spawnTrees()
 
 
 func toggle_debug() -> void:
@@ -64,17 +54,34 @@ func _make_light_texture() -> GradientTexture2D:
 	return tex
 
 
+
 func spawnTrees() -> void:
 	var tree_texture = load("res://art/shore tree alien.png")
 	var light_texture := _make_light_texture()
 	var placed: Array = []
 	const MIN_DISTANCE = 5
-	const MAX_TREES = 20
+	const MAX_TREES = 8
+
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	# Pick a biome centre somewhere in the dry half, away from spawn and water.
+	const BIOME_RADIUS := 18.0
+	var shore_y: int = height / 2
+	var biome_centre := Vector2(
+		rng.randi_range(int(BIOME_RADIUS) + 2, width  - int(BIOME_RADIUS) - 3),
+		rng.randi_range(int(BIOME_RADIUS) + 2, shore_y - int(BIOME_RADIUS) - 3)
+	)
+	# Nudge away from player spawn
+	if biome_centre.distance_to(Vector2(0, 0)) < BIOME_RADIUS:
+		biome_centre = Vector2(width * 0.6, shore_y * 0.4)
 
 	var candidates: Array = []
 	for x in range(0, width - 2):
 		for y in range(0, height - 2):
-			candidates.append(Vector2(x, y))
+			var p := Vector2(x, y)
+			if p.distance_to(biome_centre) <= BIOME_RADIUS:
+				candidates.append(p)
 	candidates.shuffle()
 
 	for pos in candidates:
@@ -90,12 +97,12 @@ func spawnTrees() -> void:
 		if too_close:
 			continue
 
-		# Check all 9 cells are free
+		# Check all 9 cells are free and dry (no water overlay)
 		var can_place := true
 		for dx in 3:
 			for dy in 3:
 				var c: Vector2 = pos + Vector2(dx, dy)
-				if not grid.has(c) or grid[c].occupier != null:
+				if not grid.has(c) or grid[c].occupier != null or water_tiles.has(c):
 					can_place = false
 					break
 			if not can_place:
@@ -104,6 +111,46 @@ func spawnTrees() -> void:
 			continue
 
 		placed.append(pos)
+
+		# --- Dirt patch (two-pass for rounded edges) ---
+		var centre: Vector2 = pos + Vector2(1.0, 1.0)
+		const DIRT_RADIUS := 3.8
+		var local_dirt: Dictionary = {}
+
+		for dx in range(-5, 6):
+			for dy in range(-5, 6):
+				var c := Vector2(centre.x + dx, centre.y + dy)
+				if not grid.has(c) or water_tiles.has(c):
+					continue
+				var dist := Vector2(float(dx), float(dy)).length()
+				var paint := false
+				if dist <= 2.2:
+					paint = true
+				else:
+					var prob := pow(max(0.0, 1.0 - (dist - 2.2) / (DIRT_RADIUS - 2.2)), 0.5)
+					paint = rng.randf() < prob
+				if paint:
+					local_dirt[c] = true
+					dirt_tiles[c] = true
+
+		var dirt_tex := load("res://art/alien dirt.png")
+		var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
+		for c in local_dirt:
+			var mask := 0
+			if local_dirt.has(c + Vector2(0, -1)): mask |= 1
+			if local_dirt.has(c + Vector2(1,  0)): mask |= 2
+			if local_dirt.has(c + Vector2(0,  1)): mask |= 4
+			if local_dirt.has(c + Vector2(-1, 0)): mask |= 8
+			if mask == 15:
+				set_cell(LAYER_FLOOR, Vector2i(int(c.x), int(c.y)), 6, Vector2i(0, 0))
+			else:
+				var mat: ShaderMaterial = dirt_base_mat.duplicate()
+				mat.set_shader_parameter("cardinal_mask", mask)
+				var dirt_sprite := Sprite2D.new()
+				dirt_sprite.texture = dirt_tex
+				dirt_sprite.position = gridToWorld(c) + Vector2(cell_size * 0.5, cell_size * 0.5)
+				dirt_sprite.material = mat
+				add_child(dirt_sprite)
 
 		# Mark all 9 cells as occupied
 		for dx in 3:
@@ -127,6 +174,95 @@ func spawnTrees() -> void:
 		tree_lights.append(light)
 
 		tree_sprites[pos] = sprite
+
+
+func spawnRocks() -> void:
+	var tex_light1 = load("res://art/rock-light-1.png")
+	var tex_light2 = load("res://art/rock-light-2.png")
+	var tex_dark = load("res://art/rock-dark-1.png")
+	var tex_pebbles = load("res://art/pebbles.png")
+	const MAX_CLUSTERS = 10
+	const MIN_CLUSTER_DISTANCE = 7
+	const CLUSTER_RADIUS = 2
+
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	# Pick well-spaced cluster centers on dry land
+	var candidates: Array = []
+	for x in width:
+		for y in height:
+			candidates.append(Vector2(x, y))
+	candidates.shuffle()
+
+	var centers: Array = []
+	for pos in candidates:
+		if centers.size() >= MAX_CLUSTERS:
+			break
+		if not grid.has(pos) or grid[pos].occupier != null or water_tiles.has(pos):
+			continue
+		if pos.distance_to(Vector2(0, 0)) < 4:
+			continue
+		var too_close := false
+		for c in centers:
+			if pos.distance_to(c) < MIN_CLUSTER_DISTANCE:
+				too_close = true
+				break
+		if too_close:
+			continue
+		centers.append(pos)
+
+	# Scatter 2-3 rocks around each center using both textures
+	for center in centers:
+		var nearby: Array = []
+		for dx in range(-CLUSTER_RADIUS, CLUSTER_RADIUS + 1):
+			for dy in range(-CLUSTER_RADIUS, CLUSTER_RADIUS + 1):
+				var c: Vector2 = center + Vector2(dx, dy)
+				if grid.has(c) and grid[c].occupier == null and not water_tiles.has(c):
+					nearby.append(c)
+		nearby.shuffle()
+		var count := rng.randi_range(2, 3)
+		for i in min(count, nearby.size()):
+			var cell: Vector2 = nearby[i]
+			grid[cell].occupier = "Rock"
+			grid[cell].navigable = false
+
+			# Pick texture based on whether this cell is alien dirt
+			var tex = tex_dark if dirt_tiles.has(cell) else (tex_light1 if rng.randi() % 2 == 0 else tex_light2)
+			var center_pos := gridToWorld(cell) + Vector2(cell_size * 0.5, cell_size * 0.5)
+
+			# Shadow: same texture, black tint, offset down-right, drawn first (behind rock)
+			var shadow := Sprite2D.new()
+			shadow.texture = tex
+			shadow.position = center_pos + Vector2(12, 14)
+			shadow.scale = Vector2(1.15, 0.6)  # squash vertically for top-down look
+			shadow.modulate = Color(0, 0, 0, 0.35)
+			shadow.z_index = -1
+			add_child(shadow)
+
+			# Rock sprite on top
+			var sprite := Sprite2D.new()
+			sprite.texture = tex
+			sprite.position = center_pos
+			sprite.z_index = 1
+			add_child(sprite)
+
+		# Scatter 0-1 pebble sprites loosely around the cluster — decorative only
+		if rng.randf() > 0.3:
+			continue
+		var pebble_count := 1
+		for _p in pebble_count:
+			var angle := rng.randf() * TAU
+			var dist := rng.randf_range(0.3, float(CLUSTER_RADIUS) + 0.8)
+			var offset := Vector2(cos(angle), sin(angle)) * dist * cell_size
+			var pebble_cell := worldToGrid(gridToWorld(center) + offset)
+			if not grid.has(pebble_cell) or water_tiles.has(pebble_cell):
+				continue
+			var pebble := Sprite2D.new()
+			pebble.texture = tex_pebbles
+			pebble.position = gridToWorld(pebble_cell) + Vector2(cell_size * 0.5, cell_size * 0.5)
+			pebble.z_index = 0
+			add_child(pebble)
 
 
 func get_tree_root(pos: Vector2) -> Vector2:
@@ -230,19 +366,23 @@ func _place_building(grid_pos: Vector2) -> void:
 
 
 ## Place a water tile overlay at a grid cell. Replaces any existing water tile there.
-func place_water_tile(pos: Vector2, variant: WaterTile.Variant = WaterTile.Variant.SHALLOW) -> void:
+## Returns the new WaterTile so callers can apply a custom material if needed.
+func place_water_tile(pos: Vector2, variant: WaterTile.Variant = WaterTile.Variant.SHALLOW) -> WaterTile:
 	erase_water_tile(pos)
 	var tile: WaterTile = _WATER_TILE_SCENE.instantiate()
 	tile.position = gridToWorld(pos)
 	tile.variant = variant
 	$Water.add_child(tile)
 	water_tiles[pos] = tile
+	return tile
 
 
 ## Remove the water tile overlay at a grid cell, if any.
 func erase_water_tile(pos: Vector2) -> void:
 	if water_tiles.has(pos):
-		water_tiles[pos].queue_free()
+		var entry = water_tiles[pos]
+		if entry is Node:
+			entry.queue_free()
 		water_tiles.erase(pos)
 
 

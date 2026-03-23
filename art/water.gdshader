@@ -14,6 +14,10 @@ uniform float glint_intensity : hint_range(0.0, 1.0) = 0.15;
 // Overall transparency
 uniform float alpha : hint_range(0.0, 1.0) = 0.38;
 
+// Tile scale: set to rect width in tiles so ripple density stays consistent
+// on wide per-row rects (default 1.0 for single-tile use).
+uniform float uv_tile_scale : hint_range(1.0, 500.0) = 1.0;
+
 // Shoreline: 0.0 = full tile water, 1.0 = bottom-portion only with wavy edge
 uniform float shoreline_blend : hint_range(0.0, 1.0) = 0.0;
 // Y position (0=top, 1=bottom) where the shoreline edge sits
@@ -22,7 +26,8 @@ uniform float shoreline_position : hint_range(0.0, 1.0) = 0.5;
 uniform float shoreline_softness : hint_range(0.0, 0.5) = 0.12;
 
 void fragment() {
-	vec2 uv = UV;
+	// Scale UV.x so ripple/glint density is consistent regardless of rect width.
+	vec2 uv = vec2(UV.x * uv_tile_scale, UV.y);
 	float t = TIME * ripple_speed;
 
 	// Four overlapping sine/cosine waves for organic ripple motion
