@@ -38,8 +38,11 @@ const DRAG_THRESHOLD := 8.0
 func _ready() -> void:
 	grid.generateGrid()
 	_place_water()
+	grid.spawnCrashSite()
 	grid.spawnTidePools()
 	grid.spawnTrees()
+	grid.spawnRedTrees()
+	grid.spawnDriftwood()
 	grid.spawnRocks()
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
@@ -211,3 +214,5 @@ func _process(delta: float) -> void:
 	# Lights fade in as the sky darkens (v is HSV brightness, 0=dark, 1=bright)
 	var night_factor := 1.0 - sky.v
 	grid.set_tree_light_energy(night_factor * 0.4)
+	grid.set_red_tree_light_energy(night_factor * 0.9)
+	grid.set_shadow_opacity(sky.v)

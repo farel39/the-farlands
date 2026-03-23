@@ -8,6 +8,8 @@ extends TileMap
 var grid: Dictionary = {}
 var tree_sprites: Dictionary = {}
 var tree_lights: Array = []
+var red_tree_lights: Array = []
+var shadow_sprites: Array = []
 var _tree_root: Dictionary = {}  # maps any tree cell → its root (top-left) pos
 var wood: int = 0
 
@@ -220,13 +222,363 @@ func spawnTrees() -> void:
 			lily_placed += 1
 
 
+func spawnCrashSite() -> void:
+	var ship_tex  := load("res://art/crashed ship.png") as Texture2D
+	var hull_tex  := load("res://art/crashed ship hull large.png") as Texture2D
+
+	const SHIP_TILES := 4   # ship occupies a 4×4 footprint
+	const HULL_TILES := 1   # hull fragment occupies a 1×1 footprint
+
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	# --- Place the main crashed ship near player spawn ---
+	# Try positions in a small area around (6, 4), away from the water edge
+	var ship_pos := Vector2(-1, -1)
+	var shore_y: int = height / 2
+	for attempt in 40:
+		var px: int = rng.randi_range(5, 14)
+		var py: int = rng.randi_range(3, min(shore_y - SHIP_TILES - 1, 12))
+		var ok := true
+		for dx in SHIP_TILES:
+			for dy in SHIP_TILES:
+				var c := Vector2(px + dx, py + dy)
+				if not grid.has(c) or grid[c].occupier != null or water_tiles.has(c):
+					ok = false
+					break
+			if not ok:
+				break
+		if ok:
+			ship_pos = Vector2(px, py)
+			break
+
+	if ship_pos != Vector2(-1, -1):
+		for dx in SHIP_TILES:
+			for dy in SHIP_TILES:
+				var c := ship_pos + Vector2(dx, dy)
+				grid[c].occupier = "CrashedShip"
+				grid[c].navigable = false
+
+		var sp := gridToWorld(ship_pos) + Vector2(cell_size * SHIP_TILES * 0.5, cell_size * SHIP_TILES * 0.5)
+		var s_scale := float(SHIP_TILES * cell_size) / float(ship_tex.get_width())
+
+		var ship_shadow := Sprite2D.new()
+		ship_shadow.texture = ship_tex
+		ship_shadow.position = sp + Vector2(24, 28)
+		ship_shadow.scale = Vector2(s_scale * 1.1, s_scale * 0.5)
+		ship_shadow.modulate = Color(0, 0, 0, 0.35)
+		add_child(ship_shadow)
+		shadow_sprites.append(ship_shadow)
+
+		var ship_sprite := Sprite2D.new()
+		ship_sprite.texture = ship_tex
+		ship_sprite.scale = Vector2(s_scale, s_scale)
+		ship_sprite.position = sp
+		add_child(ship_sprite)
+
+	# --- Scatter 1–2 hull fragments near the ship ---
+	var hull_count := rng.randi_range(1, 2)
+	var hull_placed := 0
+	if ship_pos != Vector2(-1, -1):
+		for attempt in 60:
+			if hull_placed >= hull_count:
+				break
+			var ox: int = rng.randi_range(-6, 6)
+			var oy: int = rng.randi_range(-4, 4)
+			var hp := ship_pos + Vector2(ox, oy)
+			var ok := true
+			for dx in HULL_TILES:
+				for dy in HULL_TILES:
+					var c := hp + Vector2(dx, dy)
+					if not grid.has(c) or grid[c].occupier != null or water_tiles.has(c):
+						ok = false
+						break
+				if not ok:
+					break
+			if not ok:
+				continue
+
+			for dx in HULL_TILES:
+				for dy in HULL_TILES:
+					var c := hp + Vector2(dx, dy)
+					grid[c].occupier = "HullFragment"
+					grid[c].navigable = false
+
+			var hp_world := gridToWorld(hp) + Vector2(cell_size * HULL_TILES * 0.5, cell_size * HULL_TILES * 0.5)
+			var h_scale := float(HULL_TILES * cell_size) / float(hull_tex.get_width())
+
+			var hull_shadow := Sprite2D.new()
+			hull_shadow.texture = hull_tex
+			hull_shadow.position = hp_world + Vector2(18, 20)
+			hull_shadow.scale = Vector2(h_scale * 1.1, h_scale * 0.5)
+			hull_shadow.modulate = Color(0, 0, 0, 0.35)
+			add_child(hull_shadow)
+			shadow_sprites.append(hull_shadow)
+
+			var hull_sprite := Sprite2D.new()
+			hull_sprite.texture = hull_tex
+			hull_sprite.scale = Vector2(h_scale, h_scale)
+			hull_sprite.position = hp_world
+			add_child(hull_sprite)
+
+			hull_placed += 1
+
+
+func spawnDriftwood() -> void:
+	var textures: Array = [
+		load("res://art/driftwood 1.png"),
+		load("res://art/driftwood 2.png"),
+		load("res://art/driftwood 3.png"),
+		load("res://art/driftwood 4.png"),
+		load("res://art/driftwood 5.png"),
+	]
+
+	const SHORE_BAND  := 6    # rows above waterline to scatter in
+	const COUNT       := 8    # total pieces to attempt
+	const MIN_DIST    := 10   # minimum grid distance between pieces
+	const MAX_DIM_PX  := 192.0  # scale each piece so its longest side = 1.5 tiles
+
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	var shore_y: int = height / 2
+
+	var candidates: Array = []
+	for x in range(0, width):
+		for y in range(0, shore_y):
+			var c := Vector2(x, y)
+			if not water_tiles.has(c) and not dirt_tiles.has(c):
+				candidates.append(c)
+	candidates.shuffle()
+
+	var placed_cells: Array = []
+	var placed := 0
+	for cell in candidates:
+		if placed >= COUNT:
+			break
+		if not grid.has(cell) or grid[cell].occupier != null or water_tiles.has(cell):
+			continue
+		var too_close := false
+		for pc in placed_cells:
+			if cell.distance_to(pc) < MIN_DIST:
+				too_close = true
+				break
+		if too_close:
+			continue
+
+		var tex: Texture2D = textures[rng.randi() % textures.size()]
+		var longest := float(max(tex.get_width(), tex.get_height()))
+		var s := MAX_DIM_PX / longest
+
+		var pos := gridToWorld(cell) + Vector2(cell_size * 0.5, cell_size * 0.5)
+
+		var shadow := Sprite2D.new()
+		shadow.texture = tex
+		shadow.scale = Vector2(s * 1.1, s * 0.55)
+		shadow.position = pos + Vector2(14, 16)
+		shadow.modulate = Color(0, 0, 0, 0.3)
+		add_child(shadow)
+		shadow_sprites.append(shadow)
+
+		var sprite := Sprite2D.new()
+		sprite.texture = tex
+		sprite.scale = Vector2(s, s)
+		sprite.position = pos
+		add_child(sprite)
+
+		grid[cell].occupier = "Driftwood"
+		placed_cells.append(cell)
+		placed += 1
+
+
+func spawnRedTrees() -> void:
+	const TREE_W     := 3
+	const TREE_H     := 3
+	const MAX_TREES  := 3
+	const MIN_DIST        := 12
+	const MIN_DIST_BLUE   := 25  # minimum distance from any blue tree
+	const DIRT_RADIUS := 7.0
+	const SAP_RADIUS := 5.0   # max grid distance from tree centre for saplings
+
+	var tree_tex := load("res://art/red alien tree.png")
+	var sap_textures: Array = [
+		load("res://art/red alien tree sampling 1.png"),
+		load("res://art/red alien tree sampling 2.png"),
+		load("res://art/red alien tree sampling 3.png"),
+	]
+	var light_texture := _make_light_texture()
+	var dirt_tex      := load("res://art/alien dirt.png")
+	var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
+
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	var shore_y: int = height / 2
+
+	# Top-left of a TREE_W×TREE_H footprint must fit entirely on dry land
+	var candidates: Array = []
+	for x in range(0, width - TREE_W):
+		for y in range(0, shore_y - TREE_W):
+			candidates.append(Vector2(x, y))
+	candidates.shuffle()
+
+	var placed: Array = []
+	var tree_data: Array = []  # [{pos, local_dirt}]
+
+	# Collect unique blue tree root positions from _tree_root
+	var blue_roots: Dictionary = {}
+	for root in _tree_root.values():
+		blue_roots[root] = true
+	var blue_positions: Array = blue_roots.keys()
+
+	# PASS 1 — select placements, collect dirt, mark footprints
+	for pos in candidates:
+		if tree_data.size() >= MAX_TREES:
+			break
+		if pos.distance_to(Vector2(0, 0)) < 5:
+			continue
+		var too_close := false
+		for p in placed:
+			if pos.distance_to(p) < MIN_DIST:
+				too_close = true
+				break
+		if too_close:
+			continue
+		for bp in blue_positions:
+			if pos.distance_to(bp) < MIN_DIST_BLUE:
+				too_close = true
+				break
+		if too_close:
+			continue
+
+		var can_place := true
+		for dx in TREE_W:
+			for dy in TREE_H:
+				var c: Vector2 = pos + Vector2(dx, dy)
+				if not grid.has(c) or grid[c].occupier != null or water_tiles.has(c):
+					can_place = false
+					break
+			if not can_place:
+				break
+		if not can_place:
+			continue
+
+		placed.append(pos)
+
+		# Dirt patch centred on tree trunk centre
+		var centre: Vector2 = pos + Vector2(1, 1)
+		var local_dirt: Dictionary = {}
+		for dx in range(-8, 9):
+			for dy in range(-8, 9):
+				var c := Vector2(centre.x + dx, centre.y + dy)
+				if not grid.has(c) or water_tiles.has(c) or grid[c].occupier != null:
+					continue
+				var dist := Vector2(float(dx), float(dy)).length()
+				var paint := false
+				if dist <= 3.0:
+					paint = true
+				else:
+					var prob := pow(max(0.0, 1.0 - (dist - 3.0) / (DIRT_RADIUS - 3.0)), 0.5)
+					paint = rng.randf() < prob
+				if paint:
+					local_dirt[c] = true
+					dirt_tiles[c] = true
+
+		# Mark footprint occupied immediately so later trees avoid it
+		for dx in TREE_W:
+			for dy in TREE_H:
+				var c: Vector2 = pos + Vector2(dx, dy)
+				grid[c].occupier = "RedTree"
+				grid[c].navigable = false
+				_tree_root[c] = pos
+
+		tree_data.append({pos = pos, local_dirt = local_dirt})
+
+	# PASS 2 — render dirt (uses complete dirt_tiles so masks are correct across all patches)
+	for td in tree_data:
+		var local_dirt: Dictionary = td.local_dirt
+		for c in local_dirt:
+			var mask := 0
+			if dirt_tiles.has(c + Vector2(0, -1)): mask |= 1
+			if dirt_tiles.has(c + Vector2(1,  0)): mask |= 2
+			if dirt_tiles.has(c + Vector2(0,  1)): mask |= 4
+			if dirt_tiles.has(c + Vector2(-1, 0)): mask |= 8
+			var diag := 0
+			if dirt_tiles.has(c + Vector2( 1, -1)): diag |= 1
+			if dirt_tiles.has(c + Vector2( 1,  1)): diag |= 2
+			if dirt_tiles.has(c + Vector2(-1,  1)): diag |= 4
+			if dirt_tiles.has(c + Vector2(-1, -1)): diag |= 8
+			var dirt_sprite := Sprite2D.new()
+			dirt_sprite.texture = dirt_tex
+			dirt_sprite.position = gridToWorld(c) + Vector2(cell_size * 0.5, cell_size * 0.5)
+			if mask < 15 or diag < 15:
+				var mat: ShaderMaterial = dirt_base_mat.duplicate()
+				mat.set_shader_parameter("cardinal_mask", mask)
+				mat.set_shader_parameter("diag_mask", diag)
+				dirt_sprite.material = mat
+			add_child(dirt_sprite)
+
+	# PASS 3 — spawn tree sprites, lights, and saplings
+	for td in tree_data:
+		var pos: Vector2 = td.pos
+		var local_dirt: Dictionary = td.local_dirt
+		var centre: Vector2 = pos + Vector2(1, 1)
+
+		var s := float(TREE_W * cell_size) / float(tree_tex.get_width())
+		var sprite := Sprite2D.new()
+		sprite.texture = tree_tex
+		sprite.scale = Vector2(s, s)
+		sprite.position = gridToWorld(pos) + Vector2(cell_size * 1.5, cell_size * 1.5)
+		add_child(sprite)
+
+		var light := PointLight2D.new()
+		light.texture = light_texture
+		light.color = Color(1.0, 0.35, 0.2)  # warm red-orange glow
+		light.energy = 0.0
+		light.texture_scale = 12.0
+		sprite.add_child(light)
+		red_tree_lights.append(light)
+
+		tree_sprites[pos] = sprite
+
+		# Saplings — placed close to the trunk within dirt patch
+		var sap_candidates: Array = []
+		for c in local_dirt.keys():
+			if c.distance_to(centre) <= SAP_RADIUS and grid.has(c) and grid[c].occupier == null:
+				sap_candidates.append(c)
+		sap_candidates.shuffle()
+		var sap_count := rng.randi_range(3, 6)
+		var sap_placed := 0
+		for sc in sap_candidates:
+			if sap_placed >= sap_count:
+				break
+			if not grid.has(sc) or grid[sc].occupier != null:
+				continue
+			var sap_tex: Texture2D = sap_textures[rng.randi() % 3]
+			var sap_s := float(cell_size) / float(sap_tex.get_width())
+			var sap := Sprite2D.new()
+			sap.texture = sap_tex
+			sap.position = gridToWorld(sc) + Vector2(cell_size * 0.5, cell_size * 0.5)
+			sap.scale = Vector2(sap_s, sap_s)
+			add_child(sap)
+			var sap_light := PointLight2D.new()
+			sap_light.texture = light_texture
+			sap_light.color = Color(1.0, 0.35, 0.2)
+			sap_light.energy = 0.0
+			sap_light.texture_scale = 5.0
+			sap.add_child(sap_light)
+			red_tree_lights.append(sap_light)
+			grid[sc].occupier = "RedTreeSapling"
+			sap_placed += 1
+
+
 func spawnRocks() -> void:
 	var tex_light1 = load("res://art/rock-light-1.png")
 	var tex_light2 = load("res://art/rock-light-2.png")
 	var tex_dark = load("res://art/rock-dark-1.png")
 	var tex_pebbles = load("res://art/pebbles.png")
-	const MAX_CLUSTERS = 10
-	const MIN_CLUSTER_DISTANCE = 7
+	const MAX_CLUSTERS = 25
+	const MIN_CLUSTER_DISTANCE = 4
 	const CLUSTER_RADIUS = 2
 
 	var rng := RandomNumberGenerator.new()
@@ -281,8 +633,8 @@ func spawnRocks() -> void:
 			shadow.position = center_pos + Vector2(12, 14)
 			shadow.scale = Vector2(1.15, 0.6)  # squash vertically for top-down look
 			shadow.modulate = Color(0, 0, 0, 0.35)
-			shadow.z_index = -1
 			add_child(shadow)
+			shadow_sprites.append(shadow)
 
 			# Rock sprite on top
 			var sprite := Sprite2D.new()
@@ -527,11 +879,21 @@ func spawnTidePools() -> void:
 			if not grid.has(gc) or water_tiles.has(gc) or used_ore_cells.has(gc):
 				continue
 			used_ore_cells[gc] = true
+			var ore_tex: Texture2D = iron_tex if used_ore_cells.size() <= ore_count else copper_tex
+			var ore_pos2: Vector2 = gridToWorld(gc) + Vector2(cell_size * 0.5, cell_size * 0.5)
+
+			var ore_shadow := Sprite2D.new()
+			ore_shadow.texture = ore_tex
+			ore_shadow.position = ore_pos2 + Vector2(10, 12)
+			ore_shadow.scale = Vector2(1.1, 0.55)
+			ore_shadow.modulate = Color(0, 0, 0, 0.35)
+			add_child(ore_shadow)
+			shadow_sprites.append(ore_shadow)
+
 			var ore_sprite := Sprite2D.new()
-			ore_sprite.texture = iron_tex if used_ore_cells.size() <= ore_count else copper_tex
-			ore_sprite.position = gridToWorld(gc) + Vector2(cell_size * 0.5, cell_size * 0.5)
+			ore_sprite.texture = ore_tex
+			ore_sprite.position = ore_pos2
 			ore_sprite.scale = Vector2(1.0, 1.0)
-			ore_sprite.z_index = 0
 			add_child(ore_sprite)
 
 
@@ -542,6 +904,14 @@ func get_tree_root(pos: Vector2) -> Vector2:
 func set_tree_light_energy(energy: float) -> void:
 	for light in tree_lights:
 		light.energy = energy
+
+func set_red_tree_light_energy(energy: float) -> void:
+	for light in red_tree_lights:
+		light.energy = energy
+
+func set_shadow_opacity(sky_brightness: float) -> void:
+	for s in shadow_sprites:
+		s.modulate.a = 0.35 * sky_brightness
 
 
 func gridToWorld(_pos: Vector2) -> Vector2:
