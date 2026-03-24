@@ -9,12 +9,16 @@ var grid: Dictionary = {}
 var tree_sprites: Dictionary = {}
 var tree_lights: Array = []
 var red_tree_lights: Array = []
+var crab_lights: Array = []
 var shadow_sprites: Array = []
 var _tree_root: Dictionary = {}  # maps any tree cell → its root (top-left) pos
 var wood: int = 0
 
 var water_tiles: Dictionary = {}  # Vector2 → WaterTile node or true
 var dirt_tiles: Dictionary = {}   # Vector2 → true  (all cells that are alien dirt)
+var crash_site_pos: Vector2 = Vector2(-1, -1)  # top-left of crashed ship footprint
+var ship_inventory: Dictionary = {}            # item name → quantity
+var crate_inventories: Dictionary = {}         # Vector2 grid pos → {item → qty}
 
 const _WATER_TILE_SCENE = preload("res://scenes/WaterTile.tscn")
 
@@ -58,7 +62,7 @@ func _make_light_texture() -> GradientTexture2D:
 
 
 func spawnTrees() -> void:
-	var tree_texture = load("res://art/shore tree alien.png")
+	var tree_texture = load("res://art/environment/shore tree alien.png")
 	var light_texture := _make_light_texture()
 	var placed: Array = []
 	const MIN_DISTANCE = 5
@@ -149,7 +153,7 @@ func spawnTrees() -> void:
 
 	# PASS 2: render all dirt using the complete global dirt_tiles for correct masks.
 	# Use Sprite2D for every tile (no set_cell) so z-ordering is consistent.
-	var dirt_tex := load("res://art/alien dirt.png")
+	var dirt_tex := load("res://art/environment/alien dirt.png")
 	var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
 
 	for c in dirt_tiles:
@@ -174,7 +178,7 @@ func spawnTrees() -> void:
 		add_child(dirt_sprite)
 
 	# PASS 3: spawn tree sprites, lights, and lily pads
-	var lily_tex := load("res://art/alien lily pad plant.png")
+	var lily_tex := load("res://art/environment/alien lily pad plant.png")
 
 	for td in tree_data:
 		var pos: Vector2 = td.pos
@@ -223,8 +227,8 @@ func spawnTrees() -> void:
 
 
 func spawnCrashSite() -> void:
-	var ship_tex  := load("res://art/crashed ship.png") as Texture2D
-	var hull_tex  := load("res://art/crashed ship hull large.png") as Texture2D
+	var ship_tex  := load("res://art/crash_site/crashed ship.png") as Texture2D
+	var hull_tex  := load("res://art/crash_site/crashed ship hull large.png") as Texture2D
 
 	const SHIP_TILES := 4   # ship occupies a 4×4 footprint
 	const HULL_TILES := 1   # hull fragment occupies a 1×1 footprint
@@ -253,6 +257,13 @@ func spawnCrashSite() -> void:
 			break
 
 	if ship_pos != Vector2(-1, -1):
+		crash_site_pos = ship_pos
+		ship_inventory = {
+			"Metal Scrap": 8,
+			"Electronics": 3,
+			"Medical Supplies": 4,
+			"Rations": 5,
+		}
 		for dx in SHIP_TILES:
 			for dy in SHIP_TILES:
 				var c := ship_pos + Vector2(dx, dy)
@@ -325,7 +336,7 @@ func spawnCrashSite() -> void:
 
 	# --- Scatter supply crates near the crash ship ---
 	if ship_pos != Vector2(-1, -1):
-		var crate_tex := load("res://art/supply crate.png") as Texture2D
+		var crate_tex := load("res://art/crash_site/supply crate.png") as Texture2D
 		var crate_scale := float(cell_size) / float(crate_tex.get_width())
 		var crate_count := rng.randi_range(2, 4)
 		var crate_placed := 0
@@ -339,6 +350,21 @@ func spawnCrashSite() -> void:
 				continue
 
 			grid[cp].occupier = "SupplyCrate"
+			grid[cp].navigable = false
+
+			# Give each crate a randomised subset of supplies
+			var all_loot: Array = [
+				["Rations", rng.randi_range(2, 5)],
+				["Bandages", rng.randi_range(1, 3)],
+				["Tools", rng.randi_range(1, 2)],
+				["Ammo", rng.randi_range(3, 6)],
+				["Metal Scrap", rng.randi_range(1, 3)],
+			]
+			all_loot.shuffle()
+			var crate_inv: Dictionary = {}
+			for entry in all_loot.slice(0, rng.randi_range(2, 4)):
+				crate_inv[entry[0]] = entry[1]
+			crate_inventories[cp] = crate_inv
 
 			var crate_world := gridToWorld(cp) + Vector2(cell_size * 0.5, cell_size * 0.5)
 			var crate_shadow := Sprite2D.new()
@@ -360,11 +386,11 @@ func spawnCrashSite() -> void:
 
 func spawnDriftwood() -> void:
 	var textures: Array = [
-		load("res://art/driftwood 1.png"),
-		load("res://art/driftwood 2.png"),
-		load("res://art/driftwood 3.png"),
-		load("res://art/driftwood 4.png"),
-		load("res://art/driftwood 5.png"),
+		load("res://art/environment/driftwood 1.png"),
+		load("res://art/environment/driftwood 2.png"),
+		load("res://art/environment/driftwood 3.png"),
+		load("res://art/environment/driftwood 4.png"),
+		load("res://art/environment/driftwood 5.png"),
 	]
 
 	const SHORE_BAND  := 6    # rows above waterline to scatter in
@@ -435,14 +461,14 @@ func spawnRedTrees() -> void:
 	const DIRT_RADIUS := 7.0
 	const SAP_RADIUS := 5.0   # max grid distance from tree centre for saplings
 
-	var tree_tex := load("res://art/red alien tree.png")
+	var tree_tex := load("res://art/environment/red alien tree.png")
 	var sap_textures: Array = [
-		load("res://art/red alien tree sampling 1.png"),
-		load("res://art/red alien tree sampling 2.png"),
-		load("res://art/red alien tree sampling 3.png"),
+		load("res://art/environment/red alien tree sampling 1.png"),
+		load("res://art/environment/red alien tree sampling 2.png"),
+		load("res://art/environment/red alien tree sampling 3.png"),
 	]
 	var light_texture := _make_light_texture()
-	var dirt_tex      := load("res://art/alien dirt.png")
+	var dirt_tex      := load("res://art/environment/alien dirt.png")
 	var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
 
 	var rng := RandomNumberGenerator.new()
@@ -608,10 +634,10 @@ func spawnRedTrees() -> void:
 
 
 func spawnRocks() -> void:
-	var tex_light1 = load("res://art/rock-light-1.png")
-	var tex_light2 = load("res://art/rock-light-2.png")
-	var tex_dark = load("res://art/rock-dark-1.png")
-	var tex_pebbles = load("res://art/pebbles.png")
+	var tex_light1 = load("res://art/environment/rock light realistic 1.png")
+	var tex_light2 = load("res://art/environment/rock light realistic 2.png")
+	var tex_dark = load("res://art/environment/rock dark realistic 1.png")
+	var tex_pebbles = load("res://art/environment/pebbles.png")
 	const MAX_CLUSTERS = 25
 	const MIN_CLUSTER_DISTANCE = 4
 	const CLUSTER_RADIUS = 2
@@ -630,7 +656,7 @@ func spawnRocks() -> void:
 	for pos in candidates:
 		if centers.size() >= MAX_CLUSTERS:
 			break
-		if not grid.has(pos) or grid[pos].occupier != null or water_tiles.has(pos):
+		if not grid.has(pos) or grid[pos].occupier != null or water_tiles.has(pos) or dirt_tiles.has(pos):
 			continue
 		if pos.distance_to(Vector2(0, 0)) < 4:
 			continue
@@ -658,8 +684,8 @@ func spawnRocks() -> void:
 			grid[cell].occupier = "Rock"
 			grid[cell].navigable = false
 
-			# Pick texture based on whether this cell is alien dirt
-			var tex = tex_dark if dirt_tiles.has(cell) else (tex_light1 if rng.randi() % 2 == 0 else tex_light2)
+			# Pick texture randomly between the two light variants
+			var tex = tex_light1 if rng.randi() % 2 == 0 else tex_light2
 			var center_pos := gridToWorld(cell) + Vector2(cell_size * 0.5, cell_size * 0.5)
 
 			# Shadow: same texture, black tint, offset down-right, drawn first (behind rock)
@@ -698,13 +724,13 @@ func spawnRocks() -> void:
 
 func spawnTidePools() -> void:
 	var pool_textures: Array = [
-		load("res://art/tide pool 1 tile var 1.png"),
-		load("res://art/tide pool 1 tile var 2.png"),
-		load("res://art/tide pool 1 tile var 3.png"),
+		load("res://art/environment/tide pool 1 tile var 1.png"),
+		load("res://art/environment/tide pool 1 tile var 2.png"),
+		load("res://art/environment/tide pool 1 tile var 3.png"),
 	]
-	var rock_tex   = load("res://art/tide pool rock.png")
-	var iron_tex   = load("res://art/iron ore.png")
-	var copper_tex = load("res://art/copper ore.png")
+	var rock_tex   = load("res://art/environment/tide pool rock.png")
+	var iron_tex   = load("res://art/environment/iron ore vein.png")
+	var copper_tex = load("res://art/environment/copper ore vein.png")
 
 	const POOL_SIZE       = 2
 	const SHORE_BAND      = 6
@@ -878,7 +904,7 @@ func spawnTidePools() -> void:
 					rock_positions[ep] = true
 
 		# Pass 2: spawn rocks — fade only on sand-facing sides
-		var fade_shader := load("res://art/tide_pool_rock.gdshader") as Shader
+		var fade_shader := load("res://art/shaders/tide_pool_rock.gdshader") as Shader
 		for rp_key in rock_positions:
 			var rp: Vector2 = rp_key
 			var mask: int = 0
@@ -934,6 +960,52 @@ func spawnTidePools() -> void:
 			add_child(ore_sprite)
 
 
+func spawnCrabs() -> void:
+	var tex_down := load("res://art/characters/alien beach crab downward.png") as Texture2D
+	var tex_side := load("res://art/characters/alien beach crab sideway left.png") as Texture2D
+	var crab_scene := load("res://scenes/Crab.tscn") as PackedScene
+
+	const COUNT := 10
+	const SHORE_BAND := 8   # tiles above the water line crabs prefer
+
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	var shore_y: int = height / 2
+
+	var candidates: Array = []
+	for x in width:
+		for y in range(shore_y - SHORE_BAND, shore_y):
+			var c := Vector2(x, y)
+			if grid.has(c) and not water_tiles.has(c) and not dirt_tiles.has(c) and grid[c].occupier == null:
+				candidates.append(c)
+	candidates.shuffle()
+
+	var light_tex := _make_light_texture()
+
+	var spawned := 0
+	for cell in candidates:
+		if spawned >= COUNT:
+			break
+		var crab: Crab = crab_scene.instantiate()
+		crab.position = gridToWorld(cell)
+		crab.shore_y_min = shore_y - SHORE_BAND - 2
+		crab.shore_y_max = shore_y - 1
+		add_child(crab)
+		crab.setup(tex_down, tex_side, self)
+
+		var light := PointLight2D.new()
+		light.texture = light_tex
+		light.color = Color(0.2, 0.9, 1.0)  # bioluminescent teal
+		light.energy = 0.0
+		light.texture_scale = 2.5
+		light.position = Vector2(cell_size * 0.5, cell_size * 0.5)
+		crab.add_child(light)
+		crab_lights.append(light)
+
+		spawned += 1
+
+
 func get_tree_root(pos: Vector2) -> Vector2:
 	return _tree_root.get(pos, pos)
 
@@ -944,6 +1016,10 @@ func set_tree_light_energy(energy: float) -> void:
 
 func set_red_tree_light_energy(energy: float) -> void:
 	for light in red_tree_lights:
+		light.energy = energy
+
+func set_crab_light_energy(energy: float) -> void:
+	for light in crab_lights:
 		light.energy = energy
 
 func set_shadow_opacity(sky_brightness: float) -> void:

@@ -1,0 +1,14 @@
+[gd_scene format=3 uid="uid://c671bihuk3s76"]
+
+[ext_resource type="Texture2D" uid="uid://clrt5fxjh8ada" path="res://art/sand.png" id="1_rrpnd"]
+[ext_resource type="Texture2D" uid="uid://cx1253oq1sutk" path="res://art/pebbles.png" id="2_rajk1"]
+
+[node name="TestLook" type="Node2D" unique_id=1858752032]
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=904731673]
+position = Vector2(808, 419)
+texture = ExtResource("1_rrpnd")
+
+[node name="Sprite2D2" type="Sprite2D" parent="." unique_id=779266893]
+position = Vector2(807, 416)
+texture = ExtResource("2_rajk1")

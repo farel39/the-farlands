@@ -44,6 +44,7 @@ func _ready() -> void:
 	grid.spawnRedTrees()
 	grid.spawnDriftwood()
 	grid.spawnRocks()
+	grid.spawnCrabs()
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
 	$Grid/Units.z_index = 1
@@ -87,17 +88,28 @@ func _place_water() -> void:
 
 func _spawn_units() -> void:
 	var chars: Array = [
-		["res://art/the engineer downward.png", "res://art/the engineer sideway.png"],
-		["res://art/the medic downward.png",    "res://art/the medic sideway.png"],
-		["res://art/the pilot downward.png",    "res://art/the pilot sideway.png"],
+		["res://art/characters/the engineer realistic downward.png", "res://art/characters/the engineer realistic sideways.png", "res://art/characters/the engineer realistic facing up.png"],
+		["res://art/characters/the medic realistic downward.png",    "res://art/characters/the medic realistic sideways.png",    "res://art/characters/the medic realistic facing up.png"],
+		["res://art/characters/the pilot realistic downward.png",    "res://art/characters/the pilot realistic sideways.png",    "res://art/characters/the pilot realistic facing up.png"],
+	]
+
+	# Place units just below the crashed ship, spread out horizontally
+	var base: Vector2 = grid.crash_site_pos
+	if base == Vector2(-1, -1):
+		base = Vector2(6, 4)  # fallback if ship didn't place
+	var spawn_positions: Array = [
+		base + Vector2(1, 5),
+		base + Vector2(2, 5),
+		base + Vector2(3, 5),
 	]
 
 	var unit_scene := preload("res://scenes/Unit.tscn")
 	var units_to_setup: Array = [unit]
+	unit.position = grid.gridToWorld(spawn_positions[0])
 
 	for i in 2:
 		var u: Unit = unit_scene.instantiate()
-		u.position = grid.gridToWorld(Vector2(i + 1, 0))
+		u.position = grid.gridToWorld(spawn_positions[i + 1])
 		$Grid/Units.add_child(u)
 		units_to_setup.append(u)
 
@@ -105,7 +117,8 @@ func _spawn_units() -> void:
 		var u: Unit = units_to_setup[i]
 		var down_tex := load(chars[i][0]) as Texture2D
 		var side_tex := load(chars[i][1]) as Texture2D
-		u.set_character_textures(down_tex, side_tex)
+		var up_tex   := load(chars[i][2]) as Texture2D
+		u.set_character_textures(down_tex, side_tex, up_tex)
 		all_units.append(u)
 		u.became_idle.connect(_assign_tasks)
 
@@ -150,6 +163,15 @@ func _handle_click() -> void:
 	var cell: CellData = grid.grid[grid_pos]
 	if cell.occupier == "Tree":
 		gui.show_tree_panel(grid.get_tree_root(grid_pos), mouse_screen)
+		return
+
+	if cell.occupier == "CrashedShip":
+		gui.show_inventory_panel("Crashed Ship", grid.ship_inventory, mouse_screen)
+		return
+
+	if cell.occupier == "SupplyCrate":
+		var inv: Dictionary = grid.crate_inventories.get(grid_pos, {})
+		gui.show_inventory_panel("Supply Crate", inv, mouse_screen)
 		return
 
 	if not cell.navigable:
@@ -228,4 +250,5 @@ func _process(delta: float) -> void:
 	var night_factor := 1.0 - sky.v
 	grid.set_tree_light_energy(night_factor * 0.4)
 	grid.set_red_tree_light_energy(night_factor * 0.9)
+	grid.set_crab_light_energy(night_factor * 0.6)
 	grid.set_shadow_opacity(sky.v)

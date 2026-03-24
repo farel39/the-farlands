@@ -24,6 +24,31 @@ var _group_panel: PanelContainer
 var _group_draft_btn: Button
 var _selected_group: Array = []
 
+var _inv_panel: PanelContainer
+var _inv_title: Label
+var _inv_rows: GridContainer
+
+const ITEM_ICONS: Dictionary = {
+	"Metal Scrap":          "res://art/items/metal scrap realistic.png",
+	"Electronics":          "res://art/items/electronics realistic.png",
+	"Medical Supplies":     "res://art/items/medical supplies realistic.png",
+	"Rations":              "res://art/items/rations realistic.png",
+	"Bandages":             "res://art/items/bandages realistic.png",
+	"Tools":                "res://art/items/wrench realistic.png",
+	"Ammo":                 "res://art/items/bullets realistic.png",
+	"Fuel Canister":        "res://art/items/fuel canister realistic.png",
+	"Emergency Flare":      "res://art/items/emergency flare realistic.png",
+	"Alien Shell":          "res://art/items/alien shell realistic.png",
+	"Bioluminescent Algae": "res://art/items/bioluminescent algae realisitc.png",
+	"Copper Nugget":        "res://art/items/copper nugget realistic.png",
+	"Crab Shell":           "res://art/items/crab shell realistic.png",
+	"Driftwood Piece":      "res://art/items/driftwood piece realistic.png",
+	"Fiber":                "res://art/items/fiber realistic.png",
+	"Iron Chunk":           "res://art/items/iron chunk realistic.png",
+	"Sand Glass Shard":     "res://art/items/sand glass shard realistic.png",
+	"Strange Egg":          "res://art/items/strange egg realistic.png",
+}
+
 var _sel_box_active: bool = false
 var _sel_box: Rect2
 
@@ -105,6 +130,25 @@ func _ready() -> void:
 	gvbox.add_child(gcancel)
 	_group_panel.add_child(gvbox)
 	add_child(_group_panel)
+
+	# Inventory panel
+	_inv_panel = PanelContainer.new()
+	_inv_panel.visible = false
+	var inv_vbox := VBoxContainer.new()
+	_inv_title = Label.new()
+	_inv_title.text = "Inventory"
+	inv_vbox.add_child(_inv_title)
+	_inv_rows = GridContainer.new()
+	_inv_rows.columns = 5
+	inv_vbox.add_child(_inv_rows)
+	var inv_sep := HSeparator.new()
+	inv_vbox.add_child(inv_sep)
+	var inv_close := Button.new()
+	inv_close.text = "Close"
+	inv_close.pressed.connect(func(): _inv_panel.visible = false)
+	inv_vbox.add_child(inv_close)
+	_inv_panel.add_child(inv_vbox)
+	add_child(_inv_panel)
 
 	$BaseButtons/HBoxContainer/Construct.pressed.connect(_on_construct_pressed)
 	$ConstructButtons/HBoxContainer/Back.pressed.connect(_on_back_pressed)
@@ -197,6 +241,51 @@ func _on_group_draft_pressed() -> void:
 		u.set_drafted(not all_drafted)
 	_group_draft_btn.text = "Draft All" if all_drafted else "Undraft All"
 	_group_panel.visible = false
+
+
+func show_inventory_panel(title: String, inventory: Dictionary, screen_pos: Vector2) -> void:
+	_inv_title.text = title
+	for child in _inv_rows.get_children():
+		child.queue_free()
+	if inventory.is_empty():
+		var empty := Label.new()
+		empty.text = "(empty)"
+		_inv_rows.add_child(empty)
+	else:
+		for item in inventory:
+			# Slot: fixed-size container with tooltip on hover
+			var slot := PanelContainer.new()
+			slot.custom_minimum_size = Vector2(56, 56)
+			slot.tooltip_text = item
+
+			# Overlay control to stack icon + qty label
+			var overlay := Control.new()
+			overlay.custom_minimum_size = Vector2(56, 56)
+			overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+			# Icon fills the slot
+			var icon := TextureRect.new()
+			icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if ITEM_ICONS.has(item):
+				var tex := load(ITEM_ICONS[item]) as Texture2D
+				if tex:
+					icon.texture = tex
+			overlay.add_child(icon)
+
+			# Quantity label at bottom-right
+			var qty := Label.new()
+			qty.text = "×" + str(inventory[item])
+			qty.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+			qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			overlay.add_child(qty)
+
+			slot.add_child(overlay)
+			_inv_rows.add_child(slot)
+	_inv_panel.position = screen_pos + Vector2(8, 8)
+	_inv_panel.visible = true
 
 
 func _process(_delta: float) -> void:

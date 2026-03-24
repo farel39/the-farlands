@@ -14,6 +14,7 @@ var harvest_target: Vector2 = Vector2(-1, -1)
 
 var _tex_down: Texture2D = null
 var _tex_side: Texture2D = null
+var _tex_up: Texture2D = null
 var task_queue: Array = []  # each entry: { "tree_pos": Vector2 }
 var drafted: bool = false:
 	set(value):
@@ -30,9 +31,10 @@ func _ready() -> void:
 	gui = grid.get_parent().get_node("CanvasLayer/GUI")
 
 
-func set_character_textures(down: Texture2D, side: Texture2D) -> void:
+func set_character_textures(down: Texture2D, side: Texture2D, up: Texture2D = null) -> void:
 	_tex_down = down
 	_tex_side = side
+	_tex_up = up
 	_apply_sprite(down, false)
 
 
@@ -65,6 +67,8 @@ func move(delta: float) -> void:
 			var dir := to_next.normalized()
 			if abs(dir.x) > abs(dir.y):
 				_apply_sprite(_tex_side, dir.x < 0)
+			elif dir.y < 0 and _tex_up:
+				_apply_sprite(_tex_up, false)
 			else:
 				_apply_sprite(_tex_down, false)
 		if dist <= remaining:

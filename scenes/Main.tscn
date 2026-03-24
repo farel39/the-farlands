@@ -2,17 +2,17 @@
 
 [ext_resource type="Script" uid="uid://b2p7dkwgyf23" path="res://scripts/systems/Main.gd" id="1_8llo8"]
 [ext_resource type="Script" uid="uid://s28p5sglm4aw" path="res://scripts/systems/Grid.gd" id="2_brr1f"]
-[ext_resource type="Texture2D" uid="uid://3l2l7i85px5" path="res://art/dirt.png" id="2_r0gd4"]
+[ext_resource type="Texture2D" uid="uid://3l2l7i85px5" path="res://art/environment/dirt.png" id="2_r0gd4"]
 [ext_resource type="PackedScene" uid="uid://tdqsa8iv10of" path="res://scenes/Unit.tscn" id="3_d463r"]
-[ext_resource type="Texture2D" uid="uid://v7e8imimj5dw" path="res://art/grass.png" id="3_krkin"]
+[ext_resource type="Texture2D" uid="uid://v7e8imimj5dw" path="res://art/environment/grass.png" id="3_krkin"]
 [ext_resource type="Script" uid="uid://bgtxtdf4nsyei" path="res://scripts/systems/Camera.gd" id="3_pkilc"]
 [ext_resource type="Script" uid="uid://cuuf16dly0s6y" path="res://scripts/systems/Pathfinding.gd" id="4_q8kdv"]
 [ext_resource type="Texture2D" uid="uid://cssepkn7tv6tj" path="res://art/missing.png" id="4_yxg74"]
-[ext_resource type="Texture2D" uid="uid://cn2qprvdaisp1" path="res://art/stonewall.png" id="5_gqpea"]
-[ext_resource type="Texture2D" uid="uid://clrt5fxjh8ada" path="res://art/sand.png" id="7_bjd11"]
-[ext_resource type="Texture2D" uid="uid://d3f15xsj1174g" path="res://art/woodwall.png" id="10_krkin"]
+[ext_resource type="Texture2D" uid="uid://cn2qprvdaisp1" path="res://art/buildings/stonewall.png" id="5_gqpea"]
+[ext_resource type="Texture2D" uid="uid://clrt5fxjh8ada" path="res://art/environment/sand.png" id="7_bjd11"]
+[ext_resource type="Texture2D" uid="uid://d3f15xsj1174g" path="res://art/buildings/woodwall.png" id="10_krkin"]
 [ext_resource type="Script" uid="uid://dcnsnwm7bloko" path="res://scripts/ui/GUI.gd" id="10_yxg74"]
-[ext_resource type="Texture2D" path="res://art/alien dirt.png" id="11_adirt"]
+[ext_resource type="Texture2D" uid="uid://xv0es08wjdde" path="res://art/environment/alien dirt.png" id="11_adirt"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1jtt4"]
 texture = ExtResource("2_r0gd4")
@@ -62,7 +62,7 @@ sources/6 = SubResource("TileSetAtlasSource_adirt")
 [node name="Main" type="Node2D" unique_id=681001700]
 script = ExtResource("1_8llo8")
 
-[node name="CanvasModulate" type="CanvasModulate" parent="."]
+[node name="CanvasModulate" type="CanvasModulate" parent="." unique_id=760258628]
 
 [node name="Grid" type="TileMap" parent="." unique_id=368783109]
 tile_set = SubResource("TileSet_q8kdv")
@@ -74,11 +74,10 @@ layer_2/name = "preview"
 layer_2/modulate = Color(1, 1, 1, 0.5)
 layer_2/z_index = 2
 script = ExtResource("2_brr1f")
-show_debug = true
 
 [node name="Debug" type="Node2D" parent="Grid" unique_id=2025527084]
 
-[node name="Water" type="Node2D" parent="Grid"]
+[node name="Water" type="Node2D" parent="Grid" unique_id=419159445]
 
 [node name="Units" type="Node2D" parent="Grid" unique_id=1831316446]
 
@@ -135,6 +134,10 @@ text = "Tasks"
 visible = false
 layout_mode = 2
 text = "Bio"
+
+[node name="Button" type="Button" parent="CanvasLayer/GUI/BaseButtons/HBoxContainer" unique_id=1160615289]
+layout_mode = 2
+text = "Research"
 
 [node name="ConstructButtons" type="Control" parent="CanvasLayer/GUI" unique_id=1021471367]
 visible = false
@@ -207,7 +210,7 @@ offset_bottom = 40.0
 
 [node name="HBoxContainer" type="HBoxContainer" parent="CanvasLayer/GUI/TaskButtons" unique_id=1250447755]
 layout_mode = 0
-offset_left = 93.0
-offset_top = 475.0
-offset_right = 194.0
-offset_bottom = 562.0
+offset_left = 9.0
+offset_top = 550.0
+offset_right = 110.0
+offset_bottom = 637.0
