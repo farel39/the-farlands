@@ -16,6 +16,7 @@ var _tex_down: Texture2D = null
 var _tex_side: Texture2D = null
 var _tex_up: Texture2D = null
 var task_queue: Array = []  # each entry: { "tree_pos": Vector2 }
+var _arrive_callback: Callable
 var drafted: bool = false:
 	set(value):
 		drafted = value
@@ -79,6 +80,10 @@ func move(delta: float) -> void:
 			position += to_next.normalized() * remaining
 			remaining = 0.0
 	if path.is_empty():
+		if _arrive_callback.is_valid():
+			var cb := _arrive_callback
+			_arrive_callback = Callable()
+			cb.call()
 		if harvest_target != Vector2(-1, -1):
 			grid.harvest_tree(harvest_target)
 			harvest_target = Vector2(-1, -1)
@@ -98,6 +103,12 @@ func interrupt_move_to(grid_pos: Vector2) -> void:
 		task_queue.push_front({"tree_pos": harvest_target})
 		harvest_target = Vector2(-1, -1)
 	path = _build_path(grid_pos)
+
+
+# Walk to grid_pos and call callback once upon arrival.
+func inspect_move_to(grid_pos: Vector2, callback: Callable) -> void:
+	_arrive_callback = callback
+	interrupt_move_to(grid_pos)
 
 
 # Queue a harvest task by tree grid position.

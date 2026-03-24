@@ -44,9 +44,11 @@ func _ready() -> void:
 	grid.spawnRedTrees()
 	grid.spawnDriftwood()
 	grid.spawnRocks()
+	grid.spawnMonolith()
 	grid.spawnCrabs()
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
+	gui.inspect_requested.connect(_on_inspect_requested)
 	$Grid/Units.z_index = 1
 	_spawn_units()
 
@@ -88,9 +90,48 @@ func _place_water() -> void:
 
 func _spawn_units() -> void:
 	var chars: Array = [
-		["res://art/characters/the engineer realistic downward.png", "res://art/characters/the engineer realistic sideways.png", "res://art/characters/the engineer realistic facing up.png"],
-		["res://art/characters/the medic realistic downward.png",    "res://art/characters/the medic realistic sideways.png",    "res://art/characters/the medic realistic facing up.png"],
-		["res://art/characters/the pilot realistic downward.png",    "res://art/characters/the pilot realistic sideways.png",    "res://art/characters/the pilot realistic facing up.png"],
+		{
+			"down": "res://art/characters/the engineer realistic downward.png",
+			"side": "res://art/characters/the engineer realistic sideways.png",
+			"up":   "res://art/characters/the engineer realistic facing up.png",
+			"name": "Raya",
+			"role": "Engineer",
+			"lines": [
+				"I can probably fix the ship... given enough scrap.",
+				"Those alien trees are beautiful, but I wouldn't touch them.",
+				"The hull integrity is worse than I thought.",
+				"I've never seen metal corrode this fast. Must be the atmosphere.",
+				"If I had my toolkit I could have us airborne in a week.",
+			]
+		},
+		{
+			"down": "res://art/characters/the medic realistic downward.png",
+			"side": "res://art/characters/the medic realistic sideways.png",
+			"up":   "res://art/characters/the medic realistic facing up.png",
+			"name": "Mira",
+			"role": "Medic",
+			"lines": [
+				"Everyone needs rest. Including you.",
+				"I've been cataloguing the local fauna. Those crabs are fascinating.",
+				"The air here is breathable but I'm detecting trace compounds I don't recognise.",
+				"We need fresh water. The tide pools won't sustain us long.",
+				"Strange egg on the shore this morning. I'm keeping it under observation.",
+			]
+		},
+		{
+			"down": "res://art/characters/the pilot realistic downward.png",
+			"side": "res://art/characters/the pilot realistic sideways.png",
+			"up":   "res://art/characters/the pilot realistic facing up.png",
+			"name": "Dax",
+			"role": "Pilot",
+			"lines": [
+				"I've crash-landed before, but never on a planet this... alive.",
+				"No signal. Whatever is blocking comms is close.",
+				"That monolith wasn't on any survey map. Someone's been here before us.",
+				"I can navigate by the stars once I chart the constellations.",
+				"The landing was rough but we're all breathing. That counts as a win.",
+			]
+		},
 	]
 
 	# Place units just below the crashed ship, spread out horizontally
@@ -115,10 +156,15 @@ func _spawn_units() -> void:
 
 	for i in units_to_setup.size():
 		var u: Unit = units_to_setup[i]
-		var down_tex := load(chars[i][0]) as Texture2D
-		var side_tex := load(chars[i][1]) as Texture2D
-		var up_tex   := load(chars[i][2]) as Texture2D
+		var c: Dictionary = chars[i]
+		var down_tex := load(c["down"]) as Texture2D
+		var side_tex := load(c["side"]) as Texture2D
+		var up_tex   := load(c["up"])   as Texture2D
 		u.set_character_textures(down_tex, side_tex, up_tex)
+		u.data.name = c["name"]
+		u.data.role = c["role"]
+		u.data.portrait = down_tex
+		u.data.dialog_lines = c["lines"]
 		all_units.append(u)
 		u.became_idle.connect(_assign_tasks)
 
@@ -174,6 +220,10 @@ func _handle_click() -> void:
 		gui.show_inventory_panel("Supply Crate", inv, mouse_screen)
 		return
 
+	if cell.occupier == "Monolith":
+		gui.show_dialog(mouse_screen)
+		return
+
 	if not cell.navigable:
 		return
 
@@ -221,6 +271,39 @@ func _formation(center: Vector2, count: int) -> Array:
 	while result.size() < count:
 		result.append(center)
 	return result
+
+
+func _on_inspect_requested() -> void:
+	if grid.monolith_pos == Vector2(-1, -1):
+		return
+	# Find closest unit (prefer idle, fall back to any)
+	var candidates := all_units.filter(func(u): return not u.drafted and not u.is_busy())
+	if candidates.is_empty():
+		candidates = all_units.filter(func(u): return not u.drafted)
+	if candidates.is_empty():
+		return
+	var monolith_centre := grid.monolith_pos + Vector2(1, 1)
+	var closest: Unit = candidates[0]
+	for u in candidates:
+		if u.get_grid_pos().distance_to(monolith_centre) < closest.get_grid_pos().distance_to(monolith_centre):
+			closest = u
+	# Walk to an adjacent free cell next to the monolith
+	var dest := Vector2(-1, -1)
+	var best_dist := INF
+	for dx in range(-1, 3):
+		for dy in range(-1, 3):
+			if dx >= 0 and dx <= 1 and dy >= 0 and dy <= 1:
+				continue
+			var c := grid.monolith_pos + Vector2(dx, dy)
+			if grid.grid.has(c) and grid.grid[c].navigable:
+				var d := closest.get_grid_pos().distance_to(c)
+				if d < best_dist:
+					best_dist = d
+					dest = c
+	if dest != Vector2(-1, -1):
+		closest.inspect_move_to(dest, func():
+			gui.show_monolith_dialog(get_viewport().get_mouse_position())
+		)
 
 
 func _on_cut_requested(grid_pos: Vector2) -> void:

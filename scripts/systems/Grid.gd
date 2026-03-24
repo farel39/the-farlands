@@ -17,6 +17,7 @@ var wood: int = 0
 var water_tiles: Dictionary = {}  # Vector2 → WaterTile node or true
 var dirt_tiles: Dictionary = {}   # Vector2 → true  (all cells that are alien dirt)
 var crash_site_pos: Vector2 = Vector2(-1, -1)  # top-left of crashed ship footprint
+var monolith_pos: Vector2 = Vector2(-1, -1)    # top-left of monolith footprint
 var ship_inventory: Dictionary = {}            # item name → quantity
 var crate_inventories: Dictionary = {}         # Vector2 grid pos → {item → qty}
 
@@ -958,6 +959,83 @@ func spawnTidePools() -> void:
 			ore_sprite.position = ore_pos2
 			ore_sprite.scale = Vector2(1.0, 1.0)
 			add_child(ore_sprite)
+
+
+func spawnMonolith() -> void:
+	var tex := load("res://art/environment/sand monolith realistic.png") as Texture2D
+	const TILES := 2
+
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	var shore_y: int = height / 2
+	var candidates: Array = []
+	for x in range(TILES, width - TILES):
+		for y in range(TILES, shore_y - TILES - 1):
+			var pos := Vector2(x, y)
+			var ok := true
+			for dx in TILES:
+				for dy in TILES:
+					var c := pos + Vector2(dx, dy)
+					if not grid.has(c) or grid[c].occupier != null or water_tiles.has(c) or dirt_tiles.has(c):
+						ok = false
+						break
+				if not ok:
+					break
+			if ok:
+				candidates.append(pos)
+
+	if candidates.is_empty():
+		return
+
+	var pos: Vector2 = candidates[rng.randi() % candidates.size()]
+	for dx in TILES:
+		for dy in TILES:
+			var c := pos + Vector2(dx, dy)
+			grid[c].occupier = "Monolith"
+			grid[c].navigable = false
+
+	monolith_pos = pos
+	var centre_world := gridToWorld(pos) + Vector2(cell_size * TILES * 0.5, cell_size * TILES * 0.5)
+
+	# Shadow
+	var s := float(TILES * cell_size) / float(tex.get_width())
+	var shadow := Sprite2D.new()
+	shadow.texture = tex
+	shadow.scale = Vector2(s * 1.1, s * 0.5)
+	shadow.position = centre_world + Vector2(20, 28)
+	shadow.modulate = Color(0, 0, 0, 0.35)
+	add_child(shadow)
+	shadow_sprites.append(shadow)
+
+	# Sprite
+	var sprite := Sprite2D.new()
+	sprite.texture = tex
+	sprite.scale = Vector2(s, s)
+	sprite.position = centre_world
+	sprite.z_index = 1
+	add_child(sprite)
+
+	# Glowing ground circle — faint alien rune ring
+	var glow_tex := _make_light_texture()
+	var glow := Sprite2D.new()
+	glow.texture = glow_tex
+	glow.modulate = Color(0.5, 0.1, 1.0, 0.25)   # deep purple tint, always visible
+	var glow_size := float(cell_size * 6)
+	glow.scale = Vector2(glow_size / 256.0, glow_size / 256.0)
+	glow.position = centre_world
+	glow.z_index = 0
+	add_child(glow)
+
+	# PointLight2D — pulses with night cycle, mystical purple
+	var light_tex := _make_light_texture()
+	var light := PointLight2D.new()
+	light.texture = light_tex
+	light.color = Color(0.55, 0.1, 1.0)   # violet
+	light.energy = 0.0
+	light.texture_scale = 10.0
+	sprite.add_child(light)
+	red_tree_lights.append(light)   # reuse night-cycle array so it fades in at night
 
 
 func spawnCrabs() -> void:

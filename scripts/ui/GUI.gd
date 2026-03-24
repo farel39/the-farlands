@@ -1,6 +1,7 @@
 extends Control
 
 signal cut_requested(pos: Vector2)
+signal inspect_requested
 
 @onready var grid: Grid = get_tree().root.get_node("Main/Grid")
 
@@ -28,6 +29,15 @@ var _inv_panel: PanelContainer
 var _inv_title: Label
 var _inv_rows: GridContainer
 
+var _dialog_panel: PanelContainer
+var _dialog_portrait: TextureRect
+var _dialog_name: Label
+var _dialog_role: Label
+var _dialog_text: Label
+var _dialog_draft_btn: Button
+var _dialog_unit: Unit
+var _dialog_rng := RandomNumberGenerator.new()
+
 const ITEM_ICONS: Dictionary = {
 	"Metal Scrap":          "res://art/items/metal scrap realistic.png",
 	"Electronics":          "res://art/items/electronics realistic.png",
@@ -52,23 +62,6 @@ const ITEM_ICONS: Dictionary = {
 var _sel_box_active: bool = false
 var _sel_box: Rect2
 
-var selectedObject = null :
-	get:
-		return selectedObject
-	set(value):
-		selectedObject = value
-		if value != null:
-			$InfoPanel.visible = true
-			match value.get_class():
-				"Unit":
-					$InfoPanel/Name.text = value.data.name
-					$BaseButtons/HBoxContainer/Bio.visible = true
-		else:
-			$InfoPanel.visible = false
-			$BaseButtons/HBoxContainer/Bio.visible = false
-
-func setSelectedObject(obj):
-	selectedObject = obj
 
 func _ready() -> void:
 	wood_label = Label.new()
@@ -150,17 +143,52 @@ func _ready() -> void:
 	_inv_panel.add_child(inv_vbox)
 	add_child(_inv_panel)
 
-	$BaseButtons/HBoxContainer/Construct.pressed.connect(_on_construct_pressed)
-	$ConstructButtons/HBoxContainer/Back.pressed.connect(_on_back_pressed)
-	$ConstructButtons/HBoxContainer/WoodWall.pressed.connect(_on_wood_wall_pressed)
-	$ConstructButtons/HBoxContainer/StoneWall.pressed.connect(_on_stone_wall_pressed)
-	$ConstructButtons/HBoxContainer/DirtFloor.pressed.connect(_on_dirt_floor_pressed)
+	# Dialog panel
+	_dialog_rng.randomize()
+	_dialog_panel = PanelContainer.new()
+	_dialog_panel.visible = false
+	_dialog_panel.custom_minimum_size = Vector2(320, 0)
+	var d_vbox := VBoxContainer.new()
+	# Top row: portrait + name/role
+	var d_top := HBoxContainer.new()
+	_dialog_portrait = TextureRect.new()
+	_dialog_portrait.custom_minimum_size = Vector2(64, 64)
+	_dialog_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_dialog_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_dialog_portrait.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	d_top.add_child(_dialog_portrait)
+	var d_name_col := VBoxContainer.new()
+	_dialog_name = Label.new()
+	_dialog_role = Label.new()
+	_dialog_role.modulate = Color(0.7, 0.7, 0.7)
+	d_name_col.add_child(_dialog_name)
+	d_name_col.add_child(_dialog_role)
+	d_top.add_child(d_name_col)
+	d_vbox.add_child(d_top)
+	d_vbox.add_child(HSeparator.new())
+	# Dialog text
+	_dialog_text = Label.new()
+	_dialog_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_dialog_text.custom_minimum_size = Vector2(300, 0)
+	d_vbox.add_child(_dialog_text)
+	d_vbox.add_child(HSeparator.new())
+	# Buttons row
+	var d_btns := HBoxContainer.new()
+	_dialog_draft_btn = Button.new()
+	_dialog_draft_btn.pressed.connect(_on_dialog_draft_pressed)
+	d_btns.add_child(_dialog_draft_btn)
+	var d_inspect := Button.new()
+	d_inspect.text = "Inspect"
+	d_inspect.pressed.connect(_on_inspect_pressed)
+	d_btns.add_child(d_inspect)
+	var d_close := Button.new()
+	d_close.text = "Close"
+	d_close.pressed.connect(func(): _dialog_panel.visible = false)
+	d_btns.add_child(d_close)
+	d_vbox.add_child(d_btns)
+	_dialog_panel.add_child(d_vbox)
+	add_child(_dialog_panel)
 
-	var grid_btn := Button.new()
-	grid_btn.text = "Grid"
-	grid_btn.toggle_mode = true
-	grid_btn.pressed.connect(func(): grid.toggle_debug())
-	$BaseButtons/HBoxContainer.add_child(grid_btn)
 
 
 func _draw() -> void:
@@ -180,31 +208,6 @@ func hide_selection_box() -> void:
 	_sel_box_active = false
 	queue_redraw()
 
-
-func _on_construct_pressed() -> void:
-	$BaseButtons.visible = false
-	$ConstructButtons.visible = true
-
-func _on_back_pressed() -> void:
-	$BaseButtons.visible = true
-	$ConstructButtons.visible = false
-	grid.exit_placement_mode()
-
-func _on_wood_wall_pressed() -> void:
-	grid.enter_placement_mode(BUILDINGS["WoodWall"])
-	_show_base_buttons()
-
-func _on_stone_wall_pressed() -> void:
-	grid.enter_placement_mode(BUILDINGS["StoneWall"])
-	_show_base_buttons()
-
-func _on_dirt_floor_pressed() -> void:
-	grid.enter_placement_mode(BUILDINGS["DirtFloor"])
-	_show_base_buttons()
-
-func _show_base_buttons() -> void:
-	$BaseButtons.visible = true
-	$ConstructButtons.visible = false
 
 
 func show_tree_panel(pos: Vector2, screen_pos: Vector2) -> void:
@@ -241,6 +244,45 @@ func _on_group_draft_pressed() -> void:
 		u.set_drafted(not all_drafted)
 	_group_draft_btn.text = "Draft All" if all_drafted else "Undraft All"
 	_group_panel.visible = false
+
+
+const MONOLITH_LINES: Array = [
+	"The symbols etched into the stone predate any known civilisation.",
+	"You feel a faint vibration beneath your fingertips.",
+	"Something about this structure interferes with your instruments.",
+	"The stone is warm — far warmer than the surrounding air.",
+	"Whoever built this was not human.",
+	"The glyphs shift slightly when you're not looking directly at them.",
+	"A low hum emanates from within. There is no visible source.",
+]
+
+func show_dialog(screen_pos: Vector2) -> void:
+	_dialog_portrait.texture = null
+	_dialog_name.text = "Ancient Monolith"
+	_dialog_role.text = "Unknown Origin"
+	_dialog_draft_btn.visible = false
+	_dialog_text.text = ""
+	_dialog_panel.position = screen_pos + Vector2(8, 8)
+	_dialog_panel.visible = true
+
+
+func show_monolith_dialog(screen_pos: Vector2) -> void:
+	_dialog_portrait.texture = null
+	_dialog_name.text = "Ancient Monolith"
+	_dialog_role.text = "Unknown Origin"
+	_dialog_draft_btn.visible = false
+	_dialog_text.text = '"' + MONOLITH_LINES[_dialog_rng.randi() % MONOLITH_LINES.size()] + '"'
+	_dialog_panel.position = screen_pos + Vector2(8, 8)
+	_dialog_panel.visible = true
+
+
+func _on_dialog_draft_pressed() -> void:
+	pass
+
+
+func _on_inspect_pressed() -> void:
+	_dialog_panel.visible = false
+	inspect_requested.emit()
 
 
 func show_inventory_panel(title: String, inventory: Dictionary, screen_pos: Vector2) -> void:
