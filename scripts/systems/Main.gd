@@ -41,7 +41,7 @@ func _ready() -> void:
 	grid.spawnCrashSite()
 	grid.spawnTidePools()
 	grid.spawnTrees()
-	grid.spawnRedTrees()
+	#grid.spawnRedTrees()
 	grid.spawnDriftwood()
 	grid.spawnRocks()
 	grid.spawnMonolith()
@@ -49,6 +49,7 @@ func _ready() -> void:
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
 	gui.inspect_requested.connect(_on_inspect_requested)
+	grid.blueprint_placed.connect(_on_blueprint_placed)
 	$Grid/Units.z_index = 1
 	_spawn_units()
 
@@ -168,8 +169,16 @@ func _spawn_units() -> void:
 		all_units.append(u)
 		u.became_idle.connect(_assign_tasks)
 
+	gui.register_units(all_units)
+
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_R:
+			for u in selected_units:
+				u.set_drafted(not u.drafted)
+			get_viewport().set_input_as_handled()
+			return
 	if grid.placement_mode:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -258,18 +267,20 @@ func _set_selection(units: Array) -> void:
 
 
 func _formation(center: Vector2, count: int) -> Array:
-	var dirs := [Vector2.ZERO, Vector2.RIGHT, Vector2.DOWN, Vector2.LEFT, Vector2.UP,
-				Vector2(1,1), Vector2(-1,1), Vector2(1,-1), Vector2(-1,-1),
-				Vector2(2,0), Vector2(0,2), Vector2(-2,0), Vector2(0,-2)]
 	var result: Array = []
-	for d in dirs:
+	# Spiral outward from center to find enough unique navigable cells.
+	for radius in range(0, 6):
 		if result.size() >= count:
 			break
-		var pos: Vector2 = center + d
-		if grid.grid.has(pos) and grid.grid[pos].navigable:
-			result.append(pos)
-	while result.size() < count:
-		result.append(center)
+		for dx in range(-radius, radius + 1):
+			for dy in range(-radius, radius + 1):
+				if result.size() >= count:
+					break
+				if abs(dx) != radius and abs(dy) != radius:
+					continue  # only the ring at this radius
+				var pos := center + Vector2(dx, dy)
+				if grid.grid.has(pos) and grid.grid[pos].navigable and not result.has(pos):
+					result.append(pos)
 	return result
 
 
@@ -307,7 +318,12 @@ func _on_inspect_requested() -> void:
 
 
 func _on_cut_requested(grid_pos: Vector2) -> void:
-	pending_tasks.append(grid_pos)
+	pending_tasks.append({"type": "harvest", "pos": grid_pos})
+	_assign_tasks()
+
+
+func _on_blueprint_placed(grid_pos: Vector2, _def: Dictionary) -> void:
+	pending_tasks.append({"type": "build", "pos": grid_pos})
 	_assign_tasks()
 
 
@@ -316,13 +332,15 @@ func _assign_tasks() -> void:
 		var idle := all_units.filter(func(u): return not u.drafted and not u.is_busy())
 		if idle.is_empty():
 			break
-		var task: Vector2 = pending_tasks[0]
+		var task: Dictionary = pending_tasks[0]
 		var closest: Unit = idle[0]
 		for u in idle:
-			if u.get_grid_pos().distance_to(task) < closest.get_grid_pos().distance_to(task):
+			if u.get_grid_pos().distance_to(task.pos) < closest.get_grid_pos().distance_to(task.pos):
 				closest = u
 		pending_tasks.remove_at(0)
-		closest.queue_harvest(task)
+		match task.type:
+			"harvest": closest.queue_harvest(task.pos)
+			"build":   closest.queue_build(task.pos)
 
 
 func _process(delta: float) -> void:

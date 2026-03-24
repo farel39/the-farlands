@@ -11,8 +11,8 @@
 [ext_resource type="Texture2D" uid="uid://cn2qprvdaisp1" path="res://art/buildings/stonewall.png" id="5_gqpea"]
 [ext_resource type="Texture2D" uid="uid://clrt5fxjh8ada" path="res://art/environment/sand.png" id="7_bjd11"]
 [ext_resource type="Texture2D" uid="uid://d3f15xsj1174g" path="res://art/buildings/woodwall.png" id="10_krkin"]
-[ext_resource type="Script" uid="uid://dcnsnwm7bloko" path="res://scripts/ui/GUI.gd" id="10_yxg74"]
 [ext_resource type="Texture2D" uid="uid://xv0es08wjdde" path="res://art/environment/alien dirt.png" id="11_adirt"]
+[ext_resource type="Script" uid="uid://dcnsnwm7bloko" path="res://scripts/ui/GUI.gd" id="12_guisc"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1jtt4"]
 texture = ExtResource("2_r0gd4")
@@ -99,41 +99,4 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 1
-script = ExtResource("10_yxg74")
-
-
-[node name="InfoPanel" type="Control" parent="CanvasLayer/GUI" unique_id=224795105]
-visible = false
-anchors_preset = 0
-offset_top = 404.0
-offset_bottom = 404.0
-mouse_filter = 1
-
-[node name="ColorRect" type="ColorRect" parent="CanvasLayer/GUI/InfoPanel" unique_id=295414578]
-layout_mode = 0
-offset_left = 5.0
-offset_top = 31.0
-offset_right = 512.0
-offset_bottom = 169.0
-mouse_filter = 1
-color = Color(0.33660764, 0.3366076, 0.3366076, 1)
-
-[node name="Name" type="Label" parent="CanvasLayer/GUI/InfoPanel" unique_id=1410997585]
-layout_mode = 0
-offset_left = 11.0
-offset_top = 40.0
-offset_right = 51.0
-offset_bottom = 63.0
-text = "name"
-
-[node name="TaskButtons" type="Control" parent="CanvasLayer/GUI" unique_id=277803512]
-anchors_preset = 0
-offset_right = 40.0
-offset_bottom = 40.0
-
-[node name="HBoxContainer" type="HBoxContainer" parent="CanvasLayer/GUI/TaskButtons" unique_id=1250447755]
-layout_mode = 0
-offset_left = 9.0
-offset_top = 550.0
-offset_right = 110.0
-offset_bottom = 637.0
+script = ExtResource("12_guisc")

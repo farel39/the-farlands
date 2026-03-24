@@ -18,7 +18,7 @@ static func _make_light_texture() -> GradientTexture2D:
 
 
 static func spawn_trees(g: Grid) -> void:
-	var tree_texture = load("res://art/environment/shore tree alien.png")
+	var tree_texture = load("res://art/environment/alien lily pad tree.png")
 	var light_texture := _make_light_texture()
 	var placed: Array = []
 	const MIN_DISTANCE = 5
@@ -119,6 +119,8 @@ static func spawn_trees(g: Grid) -> void:
 		var dirt_sprite := Sprite2D.new()
 		dirt_sprite.texture = dirt_tex
 		dirt_sprite.position = g.gridToWorld(c) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+		var dirt_scale := float(g.cell_size) / float(dirt_tex.get_width())
+		dirt_sprite.scale = Vector2(dirt_scale, dirt_scale)
 		if mask < 15 or diag < 15:
 			var mat: ShaderMaterial = dirt_base_mat.duplicate()
 			mat.set_shader_parameter("cardinal_mask", mask)
@@ -287,6 +289,8 @@ static func spawn_red_trees(g: Grid) -> void:
 			var dirt_sprite := Sprite2D.new()
 			dirt_sprite.texture = dirt_tex
 			dirt_sprite.position = g.gridToWorld(c) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+			var ds := float(g.cell_size) / float(dirt_tex.get_width())
+			dirt_sprite.scale = Vector2(ds, ds)
 			if mask < 15 or diag < 15:
 				var mat: ShaderMaterial = dirt_base_mat.duplicate()
 				mat.set_shader_parameter("cardinal_mask", mask)
@@ -511,7 +515,6 @@ static func spawn_driftwood(g: Grid) -> void:
 	const SHORE_BAND  := 6
 	const COUNT       := 8
 	const MIN_DIST    := 10
-	const MAX_DIM_PX  := 192.0
 
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
@@ -543,7 +546,7 @@ static func spawn_driftwood(g: Grid) -> void:
 
 		var tex: Texture2D = textures[rng.randi() % textures.size()]
 		var longest := float(max(tex.get_width(), tex.get_height()))
-		var s := MAX_DIM_PX / longest
+		var s := float(g.cell_size) * 1.5 / longest
 
 		var pos := g.gridToWorld(cell) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
 
@@ -617,11 +620,12 @@ static func spawn_rocks(g: Grid) -> void:
 
 			var tex = tex_light1 if rng.randi() % 2 == 0 else tex_light2
 			var center_pos := g.gridToWorld(cell) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+			var rock_scale := float(g.cell_size) * 0.8 / float(tex.get_height())
 
 			var shadow := Sprite2D.new()
 			shadow.texture = tex
-			shadow.position = center_pos + Vector2(12, 14)
-			shadow.scale = Vector2(1.15, 0.6)
+			shadow.position = center_pos + Vector2(8, 10)
+			shadow.scale = Vector2(rock_scale * 1.15, rock_scale * 0.45)
 			shadow.modulate = Color(0, 0, 0, 0.35)
 			g.add_child(shadow)
 			g.shadow_sprites.append(shadow)
@@ -629,6 +633,7 @@ static func spawn_rocks(g: Grid) -> void:
 			var sprite := Sprite2D.new()
 			sprite.texture = tex
 			sprite.position = center_pos
+			sprite.scale = Vector2(rock_scale, rock_scale)
 			sprite.z_index = 1
 			g.add_child(sprite)
 
@@ -643,6 +648,8 @@ static func spawn_rocks(g: Grid) -> void:
 		var pebble := Sprite2D.new()
 		pebble.texture = tex_pebbles
 		pebble.position = g.gridToWorld(pebble_cell) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+		var pebble_scale := float(g.cell_size) * 0.5 / float(tex_pebbles.get_height())
+		pebble.scale = Vector2(pebble_scale, pebble_scale)
 		pebble.z_index = 0
 		g.add_child(pebble)
 

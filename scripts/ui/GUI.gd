@@ -4,6 +4,7 @@ signal cut_requested(pos: Vector2)
 signal inspect_requested
 
 @onready var grid: Grid = get_tree().root.get_node("Main/Grid")
+@onready var camera: Camera2D = get_tree().root.get_node("Main/Camera2D")
 
 const BUILDINGS = {
 	"WoodWall":  { "name": "Wood Wall",  "source_id": 4, "layer": 1, "navigable": false },
@@ -65,11 +66,22 @@ var _dialog_portrait: TextureRect
 var _dialog_name: Label
 var _dialog_role: Label
 var _dialog_text: Label
+var _dialog_text_sep: HSeparator
 var _dialog_draft_btn: Button
 var _dialog_rng := RandomNumberGenerator.new()
 
 var _sel_box_active: bool = false
 var _sel_box: Rect2
+
+var _construct_panel: PanelContainer
+var _construct_vbox: VBoxContainer
+
+var _global_inv_panel: PanelContainer
+var _global_inv_vbox: VBoxContainer
+
+var _units_panel: PanelContainer
+var _units_vbox: VBoxContainer
+var _all_units: Array = []
 
 
 func _ready() -> void:
@@ -96,6 +108,8 @@ func _ready() -> void:
 	_dialog_rng.randomize()
 	_dialog_panel = _build_dialog_panel()
 	add_child(_dialog_panel)
+
+	_build_construct_ui()
 
 
 # ── Panel builders ────────────────────────────────────────────────────────────
@@ -201,7 +215,8 @@ func _build_dialog_panel() -> PanelContainer:
 	_dialog_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_dialog_text.custom_minimum_size = Vector2(300, 0)
 	vbox.add_child(_dialog_text)
-	vbox.add_child(HSeparator.new())
+	_dialog_text_sep = HSeparator.new()
+	vbox.add_child(_dialog_text_sep)
 
 	var btns := HBoxContainer.new()
 	_dialog_draft_btn = Button.new()
@@ -219,6 +234,343 @@ func _build_dialog_panel() -> PanelContainer:
 
 	panel.add_child(vbox)
 	return panel
+
+
+# ── Construction UI ───────────────────────────────────────────────────────────
+
+func _build_construct_ui() -> void:
+	# Panel: anchored to bottom-left, grows upward, fixed width
+	_construct_panel = PanelContainer.new()
+	_construct_panel.visible = false
+	_construct_panel.anchor_left   = 0.0
+	_construct_panel.anchor_top    = 1.0
+	_construct_panel.anchor_right  = 0.0
+	_construct_panel.anchor_bottom = 1.0
+	_construct_panel.offset_left   = 0
+	_construct_panel.offset_right  = 260
+	_construct_panel.offset_bottom = -44
+	_construct_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_construct_vbox = VBoxContainer.new()
+	_construct_panel.add_child(_construct_vbox)
+	add_child(_construct_panel)
+
+	# "Construct" button — bottom-left, above nothing
+	var btn := Button.new()
+	btn.text = "Construct"
+	btn.anchor_left   = 0.0
+	btn.anchor_top    = 1.0
+	btn.anchor_right  = 0.0
+	btn.anchor_bottom = 1.0
+	btn.offset_left   = 0
+	btn.offset_right  = 120
+	btn.offset_top    = -40
+	btn.offset_bottom = 0
+	btn.pressed.connect(_on_construct_btn_pressed)
+	add_child(btn)
+
+	# Global inventory panel — grows upward from above the inventory button
+	_global_inv_panel = PanelContainer.new()
+	_global_inv_panel.visible = false
+	_global_inv_panel.anchor_left   = 0.0
+	_global_inv_panel.anchor_top    = 1.0
+	_global_inv_panel.anchor_right  = 0.0
+	_global_inv_panel.anchor_bottom = 1.0
+	_global_inv_panel.offset_left   = 124
+	_global_inv_panel.offset_right  = 400
+	_global_inv_panel.offset_bottom = -44
+	_global_inv_panel.offset_top    = -500
+	_global_inv_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, 0)
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	_global_inv_vbox = VBoxContainer.new()
+	_global_inv_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_global_inv_vbox)
+	_global_inv_panel.add_child(scroll)
+	add_child(_global_inv_panel)
+
+	# "Inventory" button — sits right of Construct
+	var inv_btn := Button.new()
+	inv_btn.text = "Inventory"
+	inv_btn.anchor_left   = 0.0
+	inv_btn.anchor_top    = 1.0
+	inv_btn.anchor_right  = 0.0
+	inv_btn.anchor_bottom = 1.0
+	inv_btn.offset_left   = 124
+	inv_btn.offset_right  = 244
+	inv_btn.offset_top    = -40
+	inv_btn.offset_bottom = 0
+	inv_btn.pressed.connect(_on_global_inv_btn_pressed)
+	add_child(inv_btn)
+
+	# Units panel — grows upward, scrollable
+	_units_panel = PanelContainer.new()
+	_units_panel.visible = false
+	_units_panel.anchor_left   = 0.0
+	_units_panel.anchor_top    = 1.0
+	_units_panel.anchor_right  = 0.0
+	_units_panel.anchor_bottom = 1.0
+	_units_panel.offset_left   = 248
+	_units_panel.offset_right  = 530
+	_units_panel.offset_bottom = -44
+	_units_panel.offset_top    = -500
+	_units_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	var units_scroll := ScrollContainer.new()
+	units_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	units_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	units_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	_units_vbox = VBoxContainer.new()
+	_units_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	units_scroll.add_child(_units_vbox)
+	_units_panel.add_child(units_scroll)
+	add_child(_units_panel)
+
+	# "Units" button
+	var units_btn := Button.new()
+	units_btn.text = "Units"
+	units_btn.anchor_left   = 0.0
+	units_btn.anchor_top    = 1.0
+	units_btn.anchor_right  = 0.0
+	units_btn.anchor_bottom = 1.0
+	units_btn.offset_left   = 248
+	units_btn.offset_right  = 368
+	units_btn.offset_top    = -40
+	units_btn.offset_bottom = 0
+	units_btn.pressed.connect(_on_units_btn_pressed)
+	add_child(units_btn)
+
+
+func _close_bottom_panels() -> void:
+	_construct_panel.visible = false
+	_global_inv_panel.visible = false
+	_units_panel.visible = false
+
+
+func _on_construct_btn_pressed() -> void:
+	if _construct_panel.visible:
+		_construct_panel.visible = false
+	else:
+		_close_bottom_panels()
+		_show_categories()
+
+
+func _show_categories() -> void:
+	for c in _construct_vbox.get_children():
+		c.queue_free()
+	var title := Label.new()
+	title.text = "Build"
+	title.name = "CategoryRow"
+	_construct_vbox.add_child(title)
+	for cat in BuildingDefs.get_categories():
+		var btn := Button.new()
+		btn.text = cat
+		btn.pressed.connect(_show_items.bind(cat))
+		_construct_vbox.add_child(btn)
+	_construct_panel.visible = true
+
+
+func _show_items(category: String) -> void:
+	for c in _construct_vbox.get_children():
+		c.queue_free()
+	var back := Button.new()
+	back.text = "← Back"
+	back.pressed.connect(_show_categories)
+	_construct_vbox.add_child(back)
+	var title := Label.new()
+	title.text = category
+	_construct_vbox.add_child(title)
+	for bname in BuildingDefs.get_by_category(category):
+		var def: Dictionary = BuildingDefs.DEFS[bname]
+		var row := HBoxContainer.new()
+		# Icon
+		var icon := TextureRect.new()
+		icon.custom_minimum_size = Vector2(40, 40)
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		var tex := load(def.sprite) as Texture2D
+		if tex:
+			icon.texture = tex
+		row.add_child(icon)
+		# Name + cost label
+		var info_col := VBoxContainer.new()
+		var name_lbl := Label.new()
+		name_lbl.text = bname
+		info_col.add_child(name_lbl)
+		var cost_parts: Array = []
+		for item in def.cost:
+			cost_parts.append("%s ×%d" % [item, def.cost[item]])
+		var cost_lbl := Label.new()
+		cost_lbl.text = ", ".join(cost_parts)
+		cost_lbl.modulate = Color(0.75, 0.75, 0.75)
+		info_col.add_child(cost_lbl)
+		row.add_child(info_col)
+		# Place button
+		var place_btn := Button.new()
+		place_btn.text = "Place"
+		place_btn.pressed.connect(_on_place_pressed.bind(def))
+		row.add_child(place_btn)
+		_construct_vbox.add_child(row)
+
+
+func _on_place_pressed(def: Dictionary) -> void:
+	_construct_panel.visible = false
+	grid.enter_blueprint_mode(def)
+
+
+# ── Global inventory ──────────────────────────────────────────────────────────
+
+func _on_global_inv_btn_pressed() -> void:
+	if _global_inv_panel.visible:
+		_global_inv_panel.visible = false
+		return
+	_close_bottom_panels()
+	_refresh_global_inventory()
+	_global_inv_panel.visible = true
+
+
+func _refresh_global_inventory() -> void:
+	for c in _global_inv_vbox.get_children():
+		c.queue_free()
+
+	# Collect all sources: ship + crates
+	var sources: Array = []
+	if not grid.ship_inventory.is_empty():
+		sources.append({"label": "Crashed Ship", "inv": grid.ship_inventory})
+	for pos in grid.crate_inventories:
+		var inv: Dictionary = grid.crate_inventories[pos]
+		if not inv.is_empty():
+			sources.append({"label": "Crate (%d,%d)" % [int(pos.x), int(pos.y)], "inv": inv})
+
+	# Aggregate totals per item
+	var totals: Dictionary = {}
+	for src in sources:
+		for item in src.inv:
+			totals[item] = totals.get(item, 0) + src.inv[item]
+
+	if totals.is_empty():
+		var lbl := Label.new()
+		lbl.text = "No resources found."
+		_global_inv_vbox.add_child(lbl)
+		return
+
+	var title := Label.new()
+	title.text = "All Resources"
+	_global_inv_vbox.add_child(title)
+	_global_inv_vbox.add_child(HSeparator.new())
+
+	for item in totals:
+		# Item row: icon + name + total
+		var row := HBoxContainer.new()
+		var icon := TextureRect.new()
+		icon.custom_minimum_size = Vector2(32, 32)
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		if ITEM_ICONS.has(item):
+			var tex := load(ITEM_ICONS[item]) as Texture2D
+			if tex:
+				icon.texture = tex
+		row.add_child(icon)
+		var name_lbl := Label.new()
+		name_lbl.text = item
+		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(name_lbl)
+		var qty_lbl := Label.new()
+		qty_lbl.text = "×%d" % totals[item]
+		row.add_child(qty_lbl)
+		_global_inv_vbox.add_child(row)
+
+		# Sub-rows: where each chunk is located
+		for src in sources:
+			if src.inv.has(item):
+				var loc_lbl := Label.new()
+				loc_lbl.text = "  %s: ×%d" % [src.label, src.inv[item]]
+				loc_lbl.modulate = Color(0.7, 0.7, 0.7)
+				_global_inv_vbox.add_child(loc_lbl)
+
+
+# ── Units panel ──────────────────────────────────────────────────────────────
+
+func register_units(units: Array) -> void:
+	_all_units = units
+
+
+func _on_units_btn_pressed() -> void:
+	if _units_panel.visible:
+		_units_panel.visible = false
+		return
+	_close_bottom_panels()
+	_refresh_units_panel()
+	_units_panel.visible = true
+
+
+func _refresh_units_panel() -> void:
+	for c in _units_vbox.get_children():
+		c.queue_free()
+
+	var title := Label.new()
+	title.text = "Units"
+	_units_vbox.add_child(title)
+	_units_vbox.add_child(HSeparator.new())
+
+	for u in _all_units:
+		var u_node := u as Unit
+
+		# Card: clickable panel for the whole unit row
+		var card := PanelContainer.new()
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		card.gui_input.connect(func(event: InputEvent):
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				camera.center_on(u_node.position)
+		)
+
+		var row := HBoxContainer.new()
+		row.custom_minimum_size = Vector2(0, 56)
+		row.mouse_filter = Control.MOUSE_FILTER_PASS
+
+		# Portrait
+		var portrait := TextureRect.new()
+		portrait.custom_minimum_size = Vector2(48, 48)
+		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		portrait.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		portrait.mouse_filter = Control.MOUSE_FILTER_PASS
+		if u_node.data.portrait:
+			portrait.texture = u_node.data.portrait
+		row.add_child(portrait)
+
+		# Name, role, health bar column
+		var col := VBoxContainer.new()
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		col.mouse_filter = Control.MOUSE_FILTER_PASS
+
+		var name_lbl := Label.new()
+		name_lbl.text = u_node.data.name
+		name_lbl.mouse_filter = Control.MOUSE_FILTER_PASS
+		col.add_child(name_lbl)
+
+		var role_lbl := Label.new()
+		role_lbl.text = u_node.data.role
+		role_lbl.modulate = Color(0.7, 0.7, 0.7)
+		role_lbl.mouse_filter = Control.MOUSE_FILTER_PASS
+		col.add_child(role_lbl)
+
+		# Health bar
+		var bar := ProgressBar.new()
+		bar.min_value = 0.0
+		bar.max_value = u_node.data.max_health
+		bar.value = u_node.data.health
+		bar.custom_minimum_size = Vector2(0, 12)
+		bar.show_percentage = false
+		bar.mouse_filter = Control.MOUSE_FILTER_PASS
+		col.add_child(bar)
+
+		row.add_child(col)
+		card.add_child(row)
+		_units_vbox.add_child(card)
+		_units_vbox.add_child(HSeparator.new())
 
 
 # ── Selection box ─────────────────────────────────────────────────────────────
@@ -258,6 +610,31 @@ func _on_cut_pressed() -> void:
 func show_unit_panel(unit: Unit, screen_pos: Vector2) -> void:
 	_selected_unit = unit
 	_draft_btn.text = "Undraft" if unit.drafted else "Draft"
+	# Rebuild inventory rows inside the unit panel
+	var vbox := _unit_panel.get_child(0) as VBoxContainer
+	# Remove any previously added inventory rows (after the 3 fixed children)
+	while vbox.get_child_count() > 3:
+		vbox.get_child(3).queue_free()
+	if not unit.data.inventory.is_empty():
+		vbox.add_child(HSeparator.new())
+		var inv_lbl := Label.new()
+		inv_lbl.text = "Carrying:"
+		vbox.add_child(inv_lbl)
+		for item in unit.data.inventory:
+			var row := HBoxContainer.new()
+			var icon := TextureRect.new()
+			icon.custom_minimum_size = Vector2(24, 24)
+			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			if ITEM_ICONS.has(item):
+				var tex := load(ITEM_ICONS[item]) as Texture2D
+				if tex:
+					icon.texture = tex
+			row.add_child(icon)
+			var lbl := Label.new()
+			lbl.text = "%s ×%d" % [item, unit.data.inventory[item]]
+			row.add_child(lbl)
+			vbox.add_child(row)
 	_unit_panel.position = screen_pos + Vector2(8, 8)
 	_unit_panel.visible = true
 
@@ -335,6 +712,8 @@ func show_dialog(screen_pos: Vector2) -> void:
 	_dialog_role.text = "Unknown Origin"
 	_dialog_draft_btn.visible = false
 	_dialog_text.text = ""
+	_dialog_text.visible = false
+	_dialog_text_sep.visible = false
 	_dialog_panel.position = screen_pos + Vector2(8, 8)
 	_dialog_panel.visible = true
 
@@ -345,6 +724,8 @@ func show_monolith_dialog(screen_pos: Vector2) -> void:
 	_dialog_role.text = "Unknown Origin"
 	_dialog_draft_btn.visible = false
 	_dialog_text.text = '"' + MONOLITH_LINES[_dialog_rng.randi() % MONOLITH_LINES.size()] + '"'
+	_dialog_text.visible = true
+	_dialog_text_sep.visible = true
 	_dialog_panel.position = screen_pos + Vector2(8, 8)
 	_dialog_panel.visible = true
 
