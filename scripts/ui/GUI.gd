@@ -11,6 +11,37 @@ const BUILDINGS = {
 	"DirtFloor": { "name": "Dirt Floor", "source_id": 0, "layer": 0, "navigable": true  },
 }
 
+const ITEM_ICONS: Dictionary = {
+	"Metal Scrap":          "res://art/items/metal scrap realistic.png",
+	"Electronics":          "res://art/items/electronics realistic.png",
+	"Medical Supplies":     "res://art/items/medical supplies realistic.png",
+	"Rations":              "res://art/items/rations realistic.png",
+	"Bandages":             "res://art/items/bandages realistic.png",
+	"Tools":                "res://art/items/wrench realistic.png",
+	"Ammo":                 "res://art/items/bullets realistic.png",
+	"Fuel Canister":        "res://art/items/fuel canister realistic.png",
+	"Emergency Flare":      "res://art/items/emergency flare realistic.png",
+	"Alien Shell":          "res://art/items/alien shell realistic.png",
+	"Bioluminescent Algae": "res://art/items/bioluminescent algae realisitc.png",
+	"Copper Nugget":        "res://art/items/copper nugget realistic.png",
+	"Crab Shell":           "res://art/items/crab shell realistic.png",
+	"Driftwood Piece":      "res://art/items/driftwood piece realistic.png",
+	"Fiber":                "res://art/items/fiber realistic.png",
+	"Iron Chunk":           "res://art/items/iron chunk realistic.png",
+	"Sand Glass Shard":     "res://art/items/sand glass shard realistic.png",
+	"Strange Egg":          "res://art/items/strange egg realistic.png",
+}
+
+const MONOLITH_LINES: Array = [
+	"The symbols etched into the stone predate any known civilisation.",
+	"You feel a faint vibration beneath your fingertips.",
+	"Something about this structure interferes with your instruments.",
+	"The stone is warm — far warmer than the surrounding air.",
+	"Whoever built this was not human.",
+	"The glyphs shift slightly when you're not looking directly at them.",
+	"A low hum emanates from within. There is no visible source.",
+]
+
 var wood_label: Label
 var drafted_label: Label
 
@@ -35,29 +66,7 @@ var _dialog_name: Label
 var _dialog_role: Label
 var _dialog_text: Label
 var _dialog_draft_btn: Button
-var _dialog_unit: Unit
 var _dialog_rng := RandomNumberGenerator.new()
-
-const ITEM_ICONS: Dictionary = {
-	"Metal Scrap":          "res://art/items/metal scrap realistic.png",
-	"Electronics":          "res://art/items/electronics realistic.png",
-	"Medical Supplies":     "res://art/items/medical supplies realistic.png",
-	"Rations":              "res://art/items/rations realistic.png",
-	"Bandages":             "res://art/items/bandages realistic.png",
-	"Tools":                "res://art/items/wrench realistic.png",
-	"Ammo":                 "res://art/items/bullets realistic.png",
-	"Fuel Canister":        "res://art/items/fuel canister realistic.png",
-	"Emergency Flare":      "res://art/items/emergency flare realistic.png",
-	"Alien Shell":          "res://art/items/alien shell realistic.png",
-	"Bioluminescent Algae": "res://art/items/bioluminescent algae realisitc.png",
-	"Copper Nugget":        "res://art/items/copper nugget realistic.png",
-	"Crab Shell":           "res://art/items/crab shell realistic.png",
-	"Driftwood Piece":      "res://art/items/driftwood piece realistic.png",
-	"Fiber":                "res://art/items/fiber realistic.png",
-	"Iron Chunk":           "res://art/items/iron chunk realistic.png",
-	"Sand Glass Shard":     "res://art/items/sand glass shard realistic.png",
-	"Strange Egg":          "res://art/items/strange egg realistic.png",
-}
 
 var _sel_box_active: bool = false
 var _sel_box: Rect2
@@ -72,124 +81,147 @@ func _ready() -> void:
 	drafted_label.position = Vector2(8, 28)
 	add_child(drafted_label)
 
-	# Tree panel
-	_tree_panel = PanelContainer.new()
-	_tree_panel.visible = false
-	var tvbox := VBoxContainer.new()
-	var ttitle := Label.new()
-	ttitle.text = "Tree"
+	_tree_panel = _build_tree_panel()
+	add_child(_tree_panel)
+
+	_unit_panel = _build_unit_panel()
+	add_child(_unit_panel)
+
+	_group_panel = _build_group_panel()
+	add_child(_group_panel)
+
+	_inv_panel = _build_inventory_panel()
+	add_child(_inv_panel)
+
+	_dialog_rng.randomize()
+	_dialog_panel = _build_dialog_panel()
+	add_child(_dialog_panel)
+
+
+# ── Panel builders ────────────────────────────────────────────────────────────
+
+func _build_tree_panel() -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.visible = false
+	var vbox := VBoxContainer.new()
+	var title := Label.new()
+	title.text = "Tree"
 	var cut_btn := Button.new()
 	cut_btn.text = "Cut"
 	cut_btn.pressed.connect(_on_cut_pressed)
-	var tcancel := Button.new()
-	tcancel.text = "Cancel"
-	tcancel.pressed.connect(func(): _tree_panel.visible = false)
-	tvbox.add_child(ttitle)
-	tvbox.add_child(cut_btn)
-	tvbox.add_child(tcancel)
-	_tree_panel.add_child(tvbox)
-	add_child(_tree_panel)
+	var cancel := Button.new()
+	cancel.text = "Cancel"
+	cancel.pressed.connect(func(): panel.visible = false)
+	vbox.add_child(title)
+	vbox.add_child(cut_btn)
+	vbox.add_child(cancel)
+	panel.add_child(vbox)
+	return panel
 
-	# Unit panel
-	_unit_panel = PanelContainer.new()
-	_unit_panel.visible = false
-	var uvbox := VBoxContainer.new()
+
+func _build_unit_panel() -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.visible = false
+	var vbox := VBoxContainer.new()
 	var uname := Label.new()
 	uname.text = "Colonist"
 	_draft_btn = Button.new()
 	_draft_btn.pressed.connect(_on_draft_pressed)
-	var ucancel := Button.new()
-	ucancel.text = "Cancel"
-	ucancel.pressed.connect(func(): _unit_panel.visible = false)
-	uvbox.add_child(uname)
-	uvbox.add_child(_draft_btn)
-	uvbox.add_child(ucancel)
-	_unit_panel.add_child(uvbox)
-	add_child(_unit_panel)
+	var cancel := Button.new()
+	cancel.text = "Cancel"
+	cancel.pressed.connect(func(): panel.visible = false)
+	vbox.add_child(uname)
+	vbox.add_child(_draft_btn)
+	vbox.add_child(cancel)
+	panel.add_child(vbox)
+	return panel
 
-	# Group panel
-	_group_panel = PanelContainer.new()
-	_group_panel.visible = false
-	var gvbox := VBoxContainer.new()
-	var gtitle := Label.new()
-	gtitle.text = "Group"
+
+func _build_group_panel() -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.visible = false
+	var vbox := VBoxContainer.new()
+	var title := Label.new()
+	title.text = "Group"
 	_group_draft_btn = Button.new()
 	_group_draft_btn.pressed.connect(_on_group_draft_pressed)
-	var gcancel := Button.new()
-	gcancel.text = "Cancel"
-	gcancel.pressed.connect(func(): _group_panel.visible = false)
-	gvbox.add_child(gtitle)
-	gvbox.add_child(_group_draft_btn)
-	gvbox.add_child(gcancel)
-	_group_panel.add_child(gvbox)
-	add_child(_group_panel)
+	var cancel := Button.new()
+	cancel.text = "Cancel"
+	cancel.pressed.connect(func(): panel.visible = false)
+	vbox.add_child(title)
+	vbox.add_child(_group_draft_btn)
+	vbox.add_child(cancel)
+	panel.add_child(vbox)
+	return panel
 
-	# Inventory panel
-	_inv_panel = PanelContainer.new()
-	_inv_panel.visible = false
-	var inv_vbox := VBoxContainer.new()
+
+func _build_inventory_panel() -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.visible = false
+	var vbox := VBoxContainer.new()
 	_inv_title = Label.new()
 	_inv_title.text = "Inventory"
-	inv_vbox.add_child(_inv_title)
+	vbox.add_child(_inv_title)
 	_inv_rows = GridContainer.new()
 	_inv_rows.columns = 5
-	inv_vbox.add_child(_inv_rows)
-	var inv_sep := HSeparator.new()
-	inv_vbox.add_child(inv_sep)
-	var inv_close := Button.new()
-	inv_close.text = "Close"
-	inv_close.pressed.connect(func(): _inv_panel.visible = false)
-	inv_vbox.add_child(inv_close)
-	_inv_panel.add_child(inv_vbox)
-	add_child(_inv_panel)
+	vbox.add_child(_inv_rows)
+	vbox.add_child(HSeparator.new())
+	var close := Button.new()
+	close.text = "Close"
+	close.pressed.connect(func(): panel.visible = false)
+	vbox.add_child(close)
+	panel.add_child(vbox)
+	return panel
 
-	# Dialog panel
-	_dialog_rng.randomize()
-	_dialog_panel = PanelContainer.new()
-	_dialog_panel.visible = false
-	_dialog_panel.custom_minimum_size = Vector2(320, 0)
-	var d_vbox := VBoxContainer.new()
-	# Top row: portrait + name/role
-	var d_top := HBoxContainer.new()
+
+func _build_dialog_panel() -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.visible = false
+	panel.custom_minimum_size = Vector2(320, 0)
+	var vbox := VBoxContainer.new()
+
+	var top := HBoxContainer.new()
 	_dialog_portrait = TextureRect.new()
 	_dialog_portrait.custom_minimum_size = Vector2(64, 64)
 	_dialog_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_dialog_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_dialog_portrait.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	d_top.add_child(_dialog_portrait)
-	var d_name_col := VBoxContainer.new()
+	top.add_child(_dialog_portrait)
+	var name_col := VBoxContainer.new()
 	_dialog_name = Label.new()
 	_dialog_role = Label.new()
 	_dialog_role.modulate = Color(0.7, 0.7, 0.7)
-	d_name_col.add_child(_dialog_name)
-	d_name_col.add_child(_dialog_role)
-	d_top.add_child(d_name_col)
-	d_vbox.add_child(d_top)
-	d_vbox.add_child(HSeparator.new())
-	# Dialog text
+	name_col.add_child(_dialog_name)
+	name_col.add_child(_dialog_role)
+	top.add_child(name_col)
+	vbox.add_child(top)
+	vbox.add_child(HSeparator.new())
+
 	_dialog_text = Label.new()
 	_dialog_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_dialog_text.custom_minimum_size = Vector2(300, 0)
-	d_vbox.add_child(_dialog_text)
-	d_vbox.add_child(HSeparator.new())
-	# Buttons row
-	var d_btns := HBoxContainer.new()
+	vbox.add_child(_dialog_text)
+	vbox.add_child(HSeparator.new())
+
+	var btns := HBoxContainer.new()
 	_dialog_draft_btn = Button.new()
 	_dialog_draft_btn.pressed.connect(_on_dialog_draft_pressed)
-	d_btns.add_child(_dialog_draft_btn)
-	var d_inspect := Button.new()
-	d_inspect.text = "Inspect"
-	d_inspect.pressed.connect(_on_inspect_pressed)
-	d_btns.add_child(d_inspect)
-	var d_close := Button.new()
-	d_close.text = "Close"
-	d_close.pressed.connect(func(): _dialog_panel.visible = false)
-	d_btns.add_child(d_close)
-	d_vbox.add_child(d_btns)
-	_dialog_panel.add_child(d_vbox)
-	add_child(_dialog_panel)
+	btns.add_child(_dialog_draft_btn)
+	var inspect_btn := Button.new()
+	inspect_btn.text = "Inspect"
+	inspect_btn.pressed.connect(_on_inspect_pressed)
+	btns.add_child(inspect_btn)
+	var close := Button.new()
+	close.text = "Close"
+	close.pressed.connect(func(): panel.visible = false)
+	btns.add_child(close)
+	vbox.add_child(btns)
+
+	panel.add_child(vbox)
+	return panel
 
 
+# ── Selection box ─────────────────────────────────────────────────────────────
 
 func _draw() -> void:
 	if not _sel_box_active:
@@ -209,6 +241,7 @@ func hide_selection_box() -> void:
 	queue_redraw()
 
 
+# ── Tree panel ────────────────────────────────────────────────────────────────
 
 func show_tree_panel(pos: Vector2, screen_pos: Vector2) -> void:
 	_selected_tree = pos
@@ -218,6 +251,9 @@ func show_tree_panel(pos: Vector2, screen_pos: Vector2) -> void:
 func _on_cut_pressed() -> void:
 	_tree_panel.visible = false
 	cut_requested.emit(_selected_tree)
+
+
+# ── Unit panel ────────────────────────────────────────────────────────────────
 
 func show_unit_panel(unit: Unit, screen_pos: Vector2) -> void:
 	_selected_unit = unit
@@ -230,6 +266,8 @@ func _on_draft_pressed() -> void:
 	_draft_btn.text = "Undraft" if _selected_unit.drafted else "Draft"
 	_unit_panel.visible = false
 
+
+# ── Group panel ───────────────────────────────────────────────────────────────
 
 func show_group_panel(units: Array, screen_pos: Vector2) -> void:
 	_selected_group = units
@@ -246,15 +284,50 @@ func _on_group_draft_pressed() -> void:
 	_group_panel.visible = false
 
 
-const MONOLITH_LINES: Array = [
-	"The symbols etched into the stone predate any known civilisation.",
-	"You feel a faint vibration beneath your fingertips.",
-	"Something about this structure interferes with your instruments.",
-	"The stone is warm — far warmer than the surrounding air.",
-	"Whoever built this was not human.",
-	"The glyphs shift slightly when you're not looking directly at them.",
-	"A low hum emanates from within. There is no visible source.",
-]
+# ── Inventory panel ───────────────────────────────────────────────────────────
+
+func show_inventory_panel(title: String, inventory: Dictionary, screen_pos: Vector2) -> void:
+	_inv_title.text = title
+	for child in _inv_rows.get_children():
+		child.queue_free()
+	if inventory.is_empty():
+		var empty := Label.new()
+		empty.text = "(empty)"
+		_inv_rows.add_child(empty)
+	else:
+		for item in inventory:
+			var slot := PanelContainer.new()
+			slot.custom_minimum_size = Vector2(56, 56)
+			slot.tooltip_text = item
+
+			var overlay := Control.new()
+			overlay.custom_minimum_size = Vector2(56, 56)
+			overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+			var icon := TextureRect.new()
+			icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if ITEM_ICONS.has(item):
+				var tex := load(ITEM_ICONS[item]) as Texture2D
+				if tex:
+					icon.texture = tex
+			overlay.add_child(icon)
+
+			var qty := Label.new()
+			qty.text = "×" + str(inventory[item])
+			qty.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+			qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			overlay.add_child(qty)
+
+			slot.add_child(overlay)
+			_inv_rows.add_child(slot)
+	_inv_panel.position = screen_pos + Vector2(8, 8)
+	_inv_panel.visible = true
+
+
+# ── Dialog panel ──────────────────────────────────────────────────────────────
 
 func show_dialog(screen_pos: Vector2) -> void:
 	_dialog_portrait.texture = null
@@ -285,50 +358,7 @@ func _on_inspect_pressed() -> void:
 	inspect_requested.emit()
 
 
-func show_inventory_panel(title: String, inventory: Dictionary, screen_pos: Vector2) -> void:
-	_inv_title.text = title
-	for child in _inv_rows.get_children():
-		child.queue_free()
-	if inventory.is_empty():
-		var empty := Label.new()
-		empty.text = "(empty)"
-		_inv_rows.add_child(empty)
-	else:
-		for item in inventory:
-			# Slot: fixed-size container with tooltip on hover
-			var slot := PanelContainer.new()
-			slot.custom_minimum_size = Vector2(56, 56)
-			slot.tooltip_text = item
-
-			# Overlay control to stack icon + qty label
-			var overlay := Control.new()
-			overlay.custom_minimum_size = Vector2(56, 56)
-			overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-			# Icon fills the slot
-			var icon := TextureRect.new()
-			icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			if ITEM_ICONS.has(item):
-				var tex := load(ITEM_ICONS[item]) as Texture2D
-				if tex:
-					icon.texture = tex
-			overlay.add_child(icon)
-
-			# Quantity label at bottom-right
-			var qty := Label.new()
-			qty.text = "×" + str(inventory[item])
-			qty.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-			qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			overlay.add_child(qty)
-
-			slot.add_child(overlay)
-			_inv_rows.add_child(slot)
-	_inv_panel.position = screen_pos + Vector2(8, 8)
-	_inv_panel.visible = true
-
+# ── HUD ───────────────────────────────────────────────────────────────────────
 
 func _process(_delta: float) -> void:
 	wood_label.text = "Wood: " + str(grid.wood)
