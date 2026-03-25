@@ -10,6 +10,9 @@ var all_units: Array = []
 var selected_units: Array = []
 var pending_tasks: Array = []
 
+var _inspect_popup: Panel = null
+var _inspect_pending: Callable
+
 const DAY_DURATION := 120.0  # seconds per full day
 var day_time: float = 0.25   # start at midday (0=dawn, 0.25=day, 0.5=dusk, 0.75=night)
 
@@ -52,6 +55,7 @@ func _ready() -> void:
 	grid.blueprint_placed.connect(_on_blueprint_placed)
 	$Grid/Units.z_index = 1
 	_spawn_units()
+	_setup_inspect_popup()
 
 
 func _place_water() -> void:
@@ -103,7 +107,29 @@ func _spawn_units() -> void:
 				"The hull integrity is worse than I thought.",
 				"I've never seen metal corrode this fast. Must be the atmosphere.",
 				"If I had my toolkit I could have us airborne in a week.",
-			]
+			],
+			"inspect": {
+				"rock": [
+					"Unusual crystalline structure. Not from any geological survey I know.",
+					"Dense. Could be useful as a building foundation.",
+					"The mineral composition is unlike anything back home.",
+				],
+				"ship": [
+					"Hull integrity at maybe thirty percent. We have our work cut out.",
+					"The secondary thrusters are completely gone. That's going to be a problem.",
+					"If I can salvage the power coupling we might actually get off this rock.",
+				],
+				"crate": [
+					"Let's see what we're working with here.",
+					"Standard emergency kit. Someone packed this well.",
+					"These supplies could last us a while if we're careful.",
+				],
+				"monolith": [
+					"These engravings aren't decorative. They're schematics.",
+					"Whatever built this had engineering knowledge we don't.",
+					"I can't place the alloy. It's not in any database I have.",
+				],
+			},
 		},
 		{
 			"down": "res://art/characters/the medic realistic downward.png",
@@ -117,7 +143,29 @@ func _spawn_units() -> void:
 				"The air here is breathable but I'm detecting trace compounds I don't recognise.",
 				"We need fresh water. The tide pools won't sustain us long.",
 				"Strange egg on the shore this morning. I'm keeping it under observation.",
-			]
+			],
+			"inspect": {
+				"rock": [
+					"These formations remind me of calcium deposits. Fascinating.",
+					"I wonder if there's anything medicinally useful in these.",
+					"Rough terrain. Watch your footing out here.",
+				],
+				"ship": [
+					"I've set up a small triage area near the wreckage.",
+					"The crash could have been much worse. We were lucky.",
+					"Still finding useful medical supplies buried in the debris.",
+				],
+				"crate": [
+					"Medical supplies are lower than I'd like. We need to ration.",
+					"I've catalogued everything in here. We're managing.",
+					"A few things here I can use to patch everyone up.",
+				],
+				"monolith": [
+					"There's something biological about these markings. Like growth patterns.",
+					"I feel strange standing near it. That's not nothing.",
+					"Whatever carved this was methodical. Almost clinical.",
+				],
+			},
 		},
 		{
 			"down": "res://art/characters/the pilot realistic downward.png",
@@ -131,7 +179,29 @@ func _spawn_units() -> void:
 				"That monolith wasn't on any survey map. Someone's been here before us.",
 				"I can navigate by the stars once I chart the constellations.",
 				"The landing was rough but we're all breathing. That counts as a win.",
-			]
+			],
+			"inspect": {
+				"rock": [
+					"Good landmark. I'm mentally mapping this place.",
+					"Solid formation. Nothing I haven't seen on a dozen other worlds.",
+					"I'd mark this on a chart if I still had one.",
+				],
+				"ship": [
+					"She was a good ship. We'll get her flying again.",
+					"I've seen worse crash landings. Barely.",
+					"The frame might be salvageable. The engines are a different story.",
+				],
+				"crate": [
+					"Emergency drop. Someone planned ahead.",
+					"Let's inventory this properly — no guessing what we have left.",
+					"Good. Rations for at least a few days if we're smart about it.",
+				],
+				"monolith": [
+					"This wasn't on any survey map. Someone's been here before us.",
+					"The positioning is deliberate. It's meant to be found.",
+					"I don't like this. Things that old don't just sit here waiting.",
+				],
+			},
 		},
 	]
 
@@ -200,6 +270,7 @@ func _spawn_units() -> void:
 		u.data.role = c["role"]
 		u.data.portrait = down_tex
 		u.data.dialog_lines = c["lines"]
+		u.data.inspect_lines = c["inspect"]
 		if c["name"] == "Raya":
 			u.set_walk_frames_side(engineer_walk_frames)
 			u.set_walk_frames_up(engineer_walk_up_frames)
@@ -222,6 +293,7 @@ func _spawn_units() -> void:
 			u.walk_fps_side = 12.0
 		all_units.append(u)
 		u.became_idle.connect(_assign_tasks)
+		u.became_idle.connect(func(): _on_unit_idle(u))
 
 	gui.register_units(all_units)
 
@@ -233,7 +305,16 @@ func _unhandled_input(event: InputEvent) -> void:
 				u.set_drafted(not u.drafted)
 			get_viewport().set_input_as_handled()
 			return
+	if _inspect_popup and _inspect_popup.visible:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			_inspect_popup.visible = false
+			get_viewport().set_input_as_handled()
+			return
 	if grid.placement_mode:
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		_handle_right_click()
+		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -281,10 +362,6 @@ func _handle_click() -> void:
 	if cell.occupier == "SupplyCrate":
 		var inv: Dictionary = grid.crate_inventories.get(grid_pos, {})
 		gui.show_inventory_panel("Supply Crate", inv, mouse_screen)
-		return
-
-	if cell.occupier == "Monolith":
-		gui.show_dialog(mouse_screen)
 		return
 
 	if not cell.navigable:
@@ -407,3 +484,96 @@ func _process(delta: float) -> void:
 	grid.set_red_tree_light_energy(night_factor * 0.9)
 	grid.set_crab_light_energy(night_factor * 0.6)
 	grid.set_shadow_opacity(sky.v)
+
+
+func _on_unit_idle(u: Unit) -> void:
+	if u.data.dialog_lines.is_empty():
+		return
+	var line: String = u.data.dialog_lines[randi() % u.data.dialog_lines.size()]
+	u.show_speech(line, true)
+
+
+func _handle_right_click() -> void:
+	var drafted := all_units.filter(func(u): return u.drafted)
+	if drafted.is_empty():
+		return
+	var grid_pos := grid.worldToGrid(get_global_mouse_position())
+	if not grid.grid.has(grid_pos):
+		return
+	var occupier: String = grid.grid[grid_pos].occupier if grid.grid[grid_pos].occupier != null else ""
+	var inspect_key: String = ""
+	var anchor: Vector2 = grid_pos
+	var anchor_size := Vector2i(1, 1)
+	if occupier == "Rock" or occupier == "TidePoolRock":
+		inspect_key = "rock"
+	elif occupier == "CrashedShip" or occupier == "HullFragment":
+		inspect_key = "ship"
+		anchor = grid.crash_site_pos
+		anchor_size = Vector2i(4, 4)
+	elif occupier == "SupplyCrate":
+		inspect_key = "crate"
+	elif occupier == "Monolith":
+		inspect_key = "monolith"
+		anchor = grid.monolith_pos
+		anchor_size = Vector2i(2, 2)
+	else:
+		return
+	# Pick unit: selected drafted first, else closest drafted to anchor
+	var best: Unit = null
+	for u in selected_units:
+		if u.drafted:
+			best = u
+			break
+	if best == null:
+		best = drafted[0]
+		for u in drafted:
+			if u.get_grid_pos().distance_to(anchor) < best.get_grid_pos().distance_to(anchor):
+				best = u
+	var dest := _find_adjacent_to(anchor, best, anchor_size)
+	if dest == Vector2(-1, -1):
+		return
+	var u_ref := best
+	var key := inspect_key
+	_inspect_pending = func():
+		u_ref.draft_inspect_to(dest, func():
+			if u_ref.data.inspect_lines.has(key):
+				var lines: Array = u_ref.data.inspect_lines[key]
+				if not lines.is_empty():
+					u_ref.show_speech(lines[randi() % lines.size()])
+		)
+	_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
+	_inspect_popup.visible = true
+
+
+func _setup_inspect_popup() -> void:
+	_inspect_popup = Panel.new()
+	_inspect_popup.visible = false
+	_inspect_popup.custom_minimum_size = Vector2(110, 36)
+	var btn := Button.new()
+	btn.text = "Inspect"
+	btn.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 4)
+	btn.pressed.connect(func():
+		_inspect_popup.visible = false
+		if _inspect_pending.is_valid():
+			_inspect_pending.call()
+			_inspect_pending = Callable()
+	)
+	_inspect_popup.add_child(btn)
+	$CanvasLayer.add_child(_inspect_popup)
+
+
+func _find_adjacent_to(anchor: Vector2, unit: Unit, size: Vector2i = Vector2i(1, 1)) -> Vector2:
+	var best := Vector2(-1, -1)
+	var best_dist := INF
+	var ref := unit.get_grid_pos()
+	for dx in range(-1, size.x + 1):
+		for dy in range(-1, size.y + 1):
+			if dx >= 0 and dx < size.x and dy >= 0 and dy < size.y:
+				continue  # skip interior cells
+			var c := anchor + Vector2(dx, dy)
+			if grid.grid.has(c) and grid.grid[c].navigable and not grid.is_cell_reserved(c, unit):
+				var d := ref.distance_to(c)
+				if d < best_dist:
+					best_dist = d
+					best = c
+	return best

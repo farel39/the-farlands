@@ -403,6 +403,8 @@ static func spawn_crash_site(g: Grid) -> void:
 		}
 		for dx in SHIP_TILES:
 			for dy in SHIP_TILES:
+				if (dx == 0 and dy == 0) or (dx == SHIP_TILES - 1 and dy == SHIP_TILES - 1):
+					continue
 				var c := ship_pos + Vector2(dx, dy)
 				g.grid[c].occupier = "CrashedShip"
 				g.grid[c].navigable = false

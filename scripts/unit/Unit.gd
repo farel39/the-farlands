@@ -45,6 +45,13 @@ var _walk_down_initial_frame: int = 0
 var walk_fps_side: float = 24.0
 var walk_fps_up: float = 24.0
 var walk_fps_down: float = 24.0
+var _bubble_text: String = ""
+var _bubble_timer: float = 0.0
+var _bubble_cooldown: float = 0.0
+const BUBBLE_DURATION := 5.0
+const BUBBLE_FADE_TIME := 1.0
+const BUBBLE_COOLDOWN := 30.0
+
 var task_queue: Array = []
 var _arrive_callback: Callable
 var drafted: bool = false:
@@ -96,6 +103,58 @@ func _draw() -> void:
 		draw_rect(Rect2(0, 0, 128, 128), Color(1.0, 0.6, 0.0, 1.0), false, 2.0)
 	if selected:
 		draw_rect(Rect2(2, 2, 124, 124), Color(0.2, 0.8, 0.2, 1.0), false, 2.0)
+	if _bubble_timer > 0.0 and not _bubble_text.is_empty():
+		_draw_speech_bubble()
+
+
+func _draw_speech_bubble() -> void:
+	var font := ThemeDB.fallback_font
+	var font_size: int = grid.cell_size / 10
+	var max_w: float = grid.cell_size * 1.8
+	var pad := Vector2(grid.cell_size * 0.06, grid.cell_size * 0.04)
+	var tail_h: float = grid.cell_size * 0.08
+	var text_size := font.get_multiline_string_size(_bubble_text, HORIZONTAL_ALIGNMENT_LEFT, max_w, font_size, 4)
+	var bw := text_size.x + pad.x * 2
+	var bh := text_size.y + pad.y * 2
+	var bx := grid.cell_size * 0.5 - bw * 0.5
+	var by := -bh - tail_h - grid.cell_size * 0.05
+	var alpha: float = clamp(_bubble_timer / BUBBLE_FADE_TIME, 0.0, 1.0)
+	# Background
+	draw_rect(Rect2(bx, by, bw, bh), Color(0.98, 0.96, 0.90, 0.95 * alpha), true)
+	draw_rect(Rect2(bx, by, bw, bh), Color(0.3, 0.25, 0.2, alpha), false, 2.0)
+	# Tail
+	var cx := grid.cell_size * 0.5
+	var tail_pts := PackedVector2Array([
+		Vector2(cx - tail_h * 0.6, by + bh),
+		Vector2(cx + tail_h * 0.6, by + bh),
+		Vector2(cx, by + bh + tail_h),
+	])
+	draw_colored_polygon(tail_pts, Color(0.98, 0.96, 0.90, 0.95 * alpha))
+	draw_polyline(PackedVector2Array([tail_pts[0], tail_pts[2], tail_pts[1]]), Color(0.3, 0.25, 0.2, alpha), 2.0)
+	# Text
+	draw_multiline_string(font, Vector2(bx + pad.x, by + pad.y + font.get_ascent(font_size)), _bubble_text, HORIZONTAL_ALIGNMENT_LEFT, max_w, font_size, 4, Color(0.15, 0.1, 0.05, alpha))
+
+func show_speech(text: String, use_cooldown: bool = false) -> void:
+	if use_cooldown and _bubble_cooldown > 0.0:
+		return
+	_bubble_text = text
+	_bubble_timer = BUBBLE_DURATION
+	if use_cooldown:
+		_bubble_cooldown = BUBBLE_COOLDOWN
+	queue_redraw()
+
+
+func _tick_bubble(delta: float) -> void:
+	if _bubble_cooldown > 0.0:
+		_bubble_cooldown -= delta
+	if _bubble_timer <= 0.0:
+		return
+	_bubble_timer -= delta
+	if _bubble_timer <= 0.0:
+		_bubble_timer = 0.0
+		_bubble_text = ""
+	queue_redraw()
+
 
 func set_walk_frames_side(frames: Array) -> void:
 	_walk_frames_side = frames
@@ -118,6 +177,7 @@ func _process(delta: float) -> void:
 	_tick_walk_anim(delta)
 	_tick_gather(delta)
 	_tick_build(delta)
+	_tick_bubble(delta)
 
 
 func _tick_walk_anim(delta: float) -> void:
@@ -281,6 +341,13 @@ func move(delta: float) -> void:
 func draft_move_to(grid_pos: Vector2) -> void:
 	harvest_target = Vector2(-1, -1)
 	path = _build_path(grid_pos)
+
+
+# Drafted move with a callback on arrival (for inspection).
+func draft_inspect_to(grid_pos: Vector2, callback: Callable) -> void:
+	_arrive_callback = callback
+	harvest_target = Vector2(-1, -1)
+	path = _set_dest(grid_pos)
 
 
 # Undrafted walk: interrupts current task, re-queues it at the front,
