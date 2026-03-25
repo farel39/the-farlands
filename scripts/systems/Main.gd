@@ -432,6 +432,26 @@ func _formation(center: Vector2, count: int) -> Array:
 	return result
 
 
+# Returns world-space positions spread around a click point so units don't pile up.
+# Slots are arranged in concentric rings; spacing ~60% of a cell.
+func _world_formation(center: Vector2, count: int) -> Array:
+	if count == 1:
+		return [center]
+	var spacing := grid.cell_size * 0.6
+	var result: Array = [center]
+	var ring := 1
+	while result.size() < count:
+		var slots := int(6 * ring)  # 6 slots per ring layer
+		for i in slots:
+			if result.size() >= count:
+				break
+			var angle := (TAU / slots) * i
+			var offset := Vector2(cos(angle), sin(angle)) * spacing * ring
+			result.append(center + offset)
+		ring += 1
+	return result
+
+
 func _on_inspect_requested() -> void:
 	if grid.monolith_pos == Vector2(-1, -1):
 		return
@@ -520,7 +540,12 @@ func _handle_right_click() -> void:
 	var anchor: Vector2 = grid_pos
 	var anchor_size := Vector2i(1, 1)
 	if occupier == "Rock" or occupier == "TidePoolRock":
-		inspect_key = "rock"
+		# Move each drafted unit to the navigable cell adjacent to the rock nearest to them
+		for u in drafted:
+			var dest := _find_adjacent_to(grid_pos, u, Vector2i(1, 1))
+			if dest != Vector2(-1, -1):
+				u.draft_move_to(grid.gridToWorld(dest) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85))
+		return
 	elif occupier == "CrashedShip" or occupier == "HullFragment":
 		inspect_key = "ship"
 		anchor = grid.crash_site_pos
@@ -532,10 +557,11 @@ func _handle_right_click() -> void:
 		anchor = grid.monolith_pos
 		anchor_size = Vector2i(2, 2)
 	else:
-		# Empty navigable ground — move drafted units to exact click position
+		# Empty navigable ground — move drafted units, spread around click point
 		if grid.grid[grid_pos].navigable:
-			for u in drafted:
-				u.draft_move_to(get_global_mouse_position())
+			var targets := _world_formation(get_global_mouse_position(), drafted.size())
+			for i in drafted.size():
+				drafted[i].draft_move_to(targets[i])
 		return
 	# Pick unit: selected drafted first, else closest drafted to anchor
 	var best: Unit = null

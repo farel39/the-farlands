@@ -127,6 +127,53 @@ func smoothPath(world_path: PackedVector2Array) -> PackedVector2Array:
 
 	return result
 
+# Pulls each intermediate waypoint toward the nearest obstacle corner it routes around,
+# minimising total path length while keeping line-of-sight from both neighbours.
+func tightenPath(world_path: PackedVector2Array) -> PackedVector2Array:
+	if world_path.size() <= 2:
+		return world_path
+	const CLEARANCE := 5.0
+	var half := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+	var result := PackedVector2Array()
+	result.append(world_path[0])
+	for i in range(1, world_path.size() - 1):
+		var prev    := world_path[i - 1]
+		var curr    := world_path[i]
+		var nxt     := world_path[i + 1]
+		var best    := curr
+		var best_len := INF
+		var curr_grid := grid.worldToGrid(curr + half)
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				if dx == 0 and dy == 0:
+					continue
+				var nb := curr_grid + Vector2(dx, dy)
+				if not grid.grid.has(nb) or grid.grid[nb].navigable:
+					continue
+				var tile_tl    := grid.gridToWorld(nb)
+				var tile_center := tile_tl + half
+				# Try all 4 corners of this obstacle tile
+				var corners := [
+					tile_tl,
+					tile_tl + Vector2(grid.cell_size, 0),
+					tile_tl + Vector2(0, grid.cell_size),
+					tile_tl + Vector2(grid.cell_size, grid.cell_size),
+				]
+				for corner: Vector2 in corners:
+					var push := (corner - tile_center).normalized()
+					# candidate stores as tile-top-left equivalent so +half = unit centre
+					var candidate := (corner + push * CLEARANCE) - half
+					if not (_hasLOS(prev, candidate) and _hasLOS(candidate, nxt)):
+						continue
+					var total_len := prev.distance_to(candidate) + candidate.distance_to(nxt)
+					if total_len < best_len:
+						best_len = total_len
+						best = candidate
+		result.append(best)
+	result.append(world_path[world_path.size() - 1])
+	return result
+
+
 func _hasLOS(a: Vector2, b: Vector2) -> bool:
 	var half := Vector2(grid.cell_size, grid.cell_size) * 0.5
 	var a_grid = grid.worldToGrid(a + half)
@@ -135,16 +182,6 @@ func _hasLOS(a: Vector2, b: Vector2) -> bool:
 	for cell in cells:
 		if grid.grid.has(cell) and not grid.grid[cell].navigable:
 			return false
-	for i in range(cells.size() - 1):
-		var from_cell: Vector2 = cells[i]
-		var to_cell: Vector2 = cells[i + 1]
-		var step := to_cell - from_cell
-		if step.x != 0 and step.y != 0:
-			var c1 = from_cell + Vector2(step.x, 0)
-			var c2 = from_cell + Vector2(0, step.y)
-			if (grid.grid.has(c1) and not grid.grid[c1].navigable) or \
-			   (grid.grid.has(c2) and not grid.grid[c2].navigable):
-				return false
 	return true
 
 # Supercover DDA: visits every cell the line passes through.

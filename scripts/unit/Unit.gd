@@ -240,6 +240,8 @@ func _process(delta: float) -> void:
 	_tick_build(delta)
 	_tick_bubble(delta)
 	_tick_idle_speech(delta)
+	# Y-sort: units lower on screen (higher Y) render in front of rocks/objects
+	z_index = int((position.y + grid.cell_size * 0.85) / grid.cell_size)
 	if drafted:
 		queue_redraw()
 
@@ -428,8 +430,25 @@ func move(delta: float) -> void:
 func draft_move_to(world_pos: Vector2) -> void:
 	harvest_target = Vector2(-1, -1)
 	_dest_world = world_pos
-	# Use the clicked tile for pathfinding (always navigable from the right-click check)
+	# Use the clicked tile for pathfinding; fall back to nearest navigable tile if needed
 	var grid_pos := grid.worldToGrid(world_pos)
+	if not grid.grid.has(grid_pos) or not grid.grid[grid_pos].navigable:
+		# Find nearest navigable tile within 3 cells
+		var best := Vector2(-1, -1)
+		var best_d := INF
+		for dx in range(-3, 4):
+			for dy in range(-3, 4):
+				var c := grid_pos + Vector2(dx, dy)
+				if grid.grid.has(c) and grid.grid[c].navigable:
+					var d := Vector2(dx, dy).length()
+					if d < best_d:
+						best_d = d
+						best = c
+		if best == Vector2(-1, -1):
+			return
+		grid_pos = best
+		world_pos = grid.gridToWorld(grid_pos) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+		_dest_world = world_pos
 	path = _set_dest(grid_pos)
 	# Replace the final grid waypoint with the feet-corrected position within that tile
 	var feet_offset := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85)
@@ -640,6 +659,7 @@ func _build_path(grid_pos: Vector2) -> PackedVector2Array:
 	for p in grid_path:
 		world_path.append(grid.gridToWorld(p))
 	world_path = pf.smoothPath(world_path)
+	world_path = pf.tightenPath(world_path)
 	if not world_path.is_empty():
 		world_path.remove_at(0)
 	return world_path

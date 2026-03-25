@@ -651,8 +651,27 @@ static func spawn_rocks(g: Grid) -> void:
 			sprite.texture = tex
 			sprite.position = center_pos
 			sprite.scale = Vector2(rock_scale, rock_scale)
-			sprite.z_index = 1
+			sprite.z_index = int(center_pos.y / g.cell_size)
 			g.add_child(sprite)
+
+			# Build a pixel-perfect StaticBody2D from the sprite's alpha channel.
+			var image: Image = (tex as Texture2D).get_image()
+			var bm := BitMap.new()
+			bm.create_from_image_alpha(image)
+			var polys := bm.opaque_to_polygons(Rect2(Vector2.ZERO, image.get_size()), 2.0)
+			if not polys.is_empty():
+				var body := StaticBody2D.new()
+				body.position = center_pos
+				# Sprite2D is centered, so offset polygon origin to match.
+				var origin := Vector2(image.get_width() * 0.5, image.get_height() * 0.5)
+				for poly: PackedVector2Array in polys:
+					var cp := CollisionPolygon2D.new()
+					var scaled := PackedVector2Array()
+					for pt: Vector2 in poly:
+						scaled.append((pt - origin) * rock_scale)
+					cp.polygon = scaled
+					body.add_child(cp)
+				g.add_child(body)
 
 		if rng.randf() > 0.3:
 			continue
