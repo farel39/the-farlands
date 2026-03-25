@@ -248,6 +248,10 @@ func _spawn_units() -> void:
 	for i in range(1, 49):
 		var frame_path := "res://art/characters/the pilot walking animation facing up frames/frame_%04d.png" % i
 		pilot_walk_up_frames.append(load(frame_path) as Texture2D)
+	var pilot_walk_down_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the pilot walking animation downward frames/frame_%04d.png" % i
+		pilot_walk_down_frames.append(load(frame_path) as Texture2D)
 
 	# Preload medic walk frames
 	var medic_walk_frames: Array = []
@@ -258,6 +262,10 @@ func _spawn_units() -> void:
 	for i in range(1, 39):
 		var frame_path := "res://art/characters/the medic walking animation facing up frames/frame_%04d.png" % i
 		medic_walk_up_frames.append(load(frame_path) as Texture2D)
+	var medic_walk_down_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the medic walking animation downward frames/frame_%04d.png" % i
+		medic_walk_down_frames.append(load(frame_path) as Texture2D)
 
 	for i in units_to_setup.size():
 		var u: Unit = units_to_setup[i]
@@ -280,17 +288,25 @@ func _spawn_units() -> void:
 		elif c["name"] == "Mira":
 			u.set_walk_frames_side(medic_walk_frames)
 			u.set_walk_frames_up(medic_walk_up_frames)
+			u.set_walk_frames_down(medic_walk_down_frames)
 			u._walk_idle_frame_side = 2
+			u._walk_idle_frame_down = 3
 			u._walk_loop_start_up = 15
+			u._walk_loop_start_down = 10
 			u._walk_up_initial_frame = 2
 			u.walk_fps_side = 12.0
 			u.walk_fps_up = 30.0
 		elif c["name"] == "Dax":
 			u.set_walk_frames_side(pilot_walk_frames)
 			u.set_walk_frames_up(pilot_walk_up_frames)
+			u.set_walk_frames_down(pilot_walk_down_frames)
 			u._walk_idle_frame_side = 7
+			u._walk_idle_frame_down = 16
 			u._walk_loop_start_up = 13
+			u._walk_loop_start_down = 17
 			u.walk_fps_side = 12.0
+			u.walk_fps_up = 12.0
+			u.walk_fps_down = 12.0
 		all_units.append(u)
 		u.became_idle.connect(_assign_tasks)
 		u.became_idle.connect(func(): _on_unit_idle(u))

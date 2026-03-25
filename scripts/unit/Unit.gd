@@ -106,10 +106,28 @@ func _draw() -> void:
 	if drafted:
 		draw_rect(Rect2(0, 0, 128, 128), Color(1.0, 0.6, 0.0, 0.2), true)
 		draw_rect(Rect2(0, 0, 128, 128), Color(1.0, 0.6, 0.0, 1.0), false, 2.0)
+		if not path.is_empty():
+			_draw_path()
 	if selected:
 		draw_rect(Rect2(2, 2, 124, 124), Color(0.2, 0.8, 0.2, 1.0), false, 2.0)
 	if _bubble_timer > 0.0 and not _bubble_text.is_empty():
 		_draw_speech_bubble()
+
+
+func _draw_path() -> void:
+	if _dest == Vector2(-1, -1):
+		return
+	var col := Color(1, 1, 1, 0.8)
+	var dest_center := to_local(grid.gridToWorld(_dest) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5))
+	var half := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+	var prev := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85)
+	for i in range(path.size() - 1):
+		var lp := to_local(path[i] + half)
+		draw_line(prev, lp, col, 1.5, true)
+		prev = lp
+	draw_line(prev, dest_center, col, 1.5, true)
+	draw_circle(dest_center, 7.0, Color(1, 1, 1, 0.2))
+	draw_arc(dest_center, 7.0, 0.0, TAU, 24, col, 1.5, true)
 
 
 func _draw_speech_bubble() -> void:
@@ -184,6 +202,8 @@ func _process(delta: float) -> void:
 	_tick_build(delta)
 	_tick_bubble(delta)
 	_tick_idle_speech(delta)
+	if drafted and not path.is_empty():
+		queue_redraw()
 
 
 func _tick_idle_speech(delta: float) -> void:
@@ -326,6 +346,7 @@ func move(delta: float) -> void:
 		_is_walking_side = false
 		_is_walking_up = false
 		_is_walking_down = false
+		queue_redraw()
 		if _dest != Vector2(-1, -1):
 			grid.release_cell(_dest, self)
 			_dest = Vector2(-1, -1)
@@ -356,7 +377,7 @@ func move(delta: float) -> void:
 # Drafted: move immediately, queue preserved but not resumed on arrival.
 func draft_move_to(grid_pos: Vector2) -> void:
 	harvest_target = Vector2(-1, -1)
-	path = _build_path(grid_pos)
+	path = _set_dest(grid_pos)
 
 
 # Drafted move with a callback on arrival (for inspection).

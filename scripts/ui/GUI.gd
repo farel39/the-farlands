@@ -43,9 +43,6 @@ const MONOLITH_LINES: Array = [
 	"A low hum emanates from within. There is no visible source.",
 ]
 
-var wood_label: Label
-var drafted_label: Label
-
 var _tree_panel: PanelContainer
 var _selected_tree: Vector2
 
@@ -89,14 +86,6 @@ var _last_drafted_ids: Array = []
 
 
 func _ready() -> void:
-	wood_label = Label.new()
-	wood_label.position = Vector2(8, 8)
-	add_child(wood_label)
-
-	drafted_label = Label.new()
-	drafted_label.position = Vector2(8, 28)
-	add_child(drafted_label)
-
 	_tree_panel = _build_tree_panel()
 	add_child(_tree_panel)
 
@@ -844,14 +833,10 @@ func _refresh_top_hud(drafted: Array) -> void:
 # ── HUD ───────────────────────────────────────────────────────────────────────
 
 func _process(_delta: float) -> void:
-	wood_label.text = "Wood: " + str(grid.wood)
 	var drafted: Array = []
-	var drafted_count := 0
 	for u in grid.get_node("Units").get_children():
 		if u is Unit and u.drafted:
 			drafted.append(u)
-			drafted_count += 1
-	drafted_label.text = "Drafted: " + str(drafted_count)
 
 	# Refresh top HUD when drafted composition changes
 	var ids: Array = drafted.map(func(u): return u.get_instance_id())
