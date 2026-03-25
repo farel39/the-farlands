@@ -100,18 +100,51 @@ func _apply_sprite(tex: Texture2D, flip_h: bool) -> void:
 		_shadow.texture = tex
 		_shadow.flip_h = flip_h
 		_shadow.scale = Vector2(s * 1.1, s * 0.18)
-		_shadow.position = Vector2(sprite.position.x - scaled_w * 0.05 + 8, grid.cell_size * 0.74)
+		_shadow.position = Vector2(sprite.position.x - scaled_w * 0.05 + 2, grid.cell_size * 0.74)
 
 func _draw() -> void:
 	if drafted:
-		draw_rect(Rect2(0, 0, 128, 128), Color(1.0, 0.6, 0.0, 0.2), true)
-		draw_rect(Rect2(0, 0, 128, 128), Color(1.0, 0.6, 0.0, 1.0), false, 2.0)
+		_draw_ground_ring(Color(1.0, 0.55, 0.0, 1.0))
 		if not path.is_empty():
 			_draw_path()
 	if selected:
-		draw_rect(Rect2(2, 2, 124, 124), Color(0.2, 0.8, 0.2, 1.0), false, 2.0)
+		_draw_corner_brackets(Color(1.0, 1.0, 1.0, 0.9))
 	if _bubble_timer > 0.0 and not _bubble_text.is_empty():
 		_draw_speech_bubble()
+
+
+func _draw_ground_ring(col: Color) -> void:
+	var cx := grid.cell_size * 0.5
+	var cy := grid.cell_size * 0.82
+	var pulse := sin(Time.get_ticks_msec() * 0.004) * 0.5 + 0.5
+	var rx := grid.cell_size * (0.28 + pulse * 0.04)
+	var ry := grid.cell_size * (0.07 + pulse * 0.01)
+	var steps := 36
+	var pts := PackedVector2Array()
+	for i in range(steps + 1):
+		var a := float(i) / steps * TAU
+		pts.append(Vector2(cx + cos(a) * rx, cy + sin(a) * ry))
+	# Faint fill
+	var fill_pts := PackedVector2Array(pts)
+	fill_pts.resize(steps)
+	draw_colored_polygon(fill_pts, Color(col.r, col.g, col.b, 0.18))
+	draw_polyline(pts, col, 2.0, true)
+
+
+func _draw_corner_brackets(col: Color) -> void:
+	var m := 6.0
+	var ln := grid.cell_size * 0.18
+	var w := 2.5
+	var x0 := m;  var y0 := m
+	var x1 := grid.cell_size - m;  var y1 := grid.cell_size - m
+	draw_line(Vector2(x0, y0), Vector2(x0 + ln, y0), col, w, true)
+	draw_line(Vector2(x0, y0), Vector2(x0, y0 + ln), col, w, true)
+	draw_line(Vector2(x1, y0), Vector2(x1 - ln, y0), col, w, true)
+	draw_line(Vector2(x1, y0), Vector2(x1, y0 + ln), col, w, true)
+	draw_line(Vector2(x0, y1), Vector2(x0 + ln, y1), col, w, true)
+	draw_line(Vector2(x0, y1), Vector2(x0, y1 - ln), col, w, true)
+	draw_line(Vector2(x1, y1), Vector2(x1 - ln, y1), col, w, true)
+	draw_line(Vector2(x1, y1), Vector2(x1, y1 - ln), col, w, true)
 
 
 func _draw_path() -> void:
@@ -202,7 +235,7 @@ func _process(delta: float) -> void:
 	_tick_build(delta)
 	_tick_bubble(delta)
 	_tick_idle_speech(delta)
-	if drafted and not path.is_empty():
+	if drafted:
 		queue_redraw()
 
 
