@@ -83,6 +83,10 @@ var _units_panel: PanelContainer
 var _units_vbox: VBoxContainer
 var _all_units: Array = []
 
+var _top_hud: HBoxContainer
+var _hud_bars: Dictionary = {}          # Unit → ProgressBar
+var _last_drafted_ids: Array = []
+
 
 func _ready() -> void:
 	wood_label = Label.new()
@@ -110,6 +114,7 @@ func _ready() -> void:
 	add_child(_dialog_panel)
 
 	_build_construct_ui()
+	_build_top_hud()
 
 
 # ── Panel builders ────────────────────────────────────────────────────────────
@@ -141,12 +146,8 @@ func _build_unit_panel() -> PanelContainer:
 	uname.text = "Colonist"
 	_draft_btn = Button.new()
 	_draft_btn.pressed.connect(_on_draft_pressed)
-	var cancel := Button.new()
-	cancel.text = "Cancel"
-	cancel.pressed.connect(func(): panel.visible = false)
 	vbox.add_child(uname)
 	vbox.add_child(_draft_btn)
-	vbox.add_child(cancel)
 	panel.add_child(vbox)
 	return panel
 
@@ -558,12 +559,10 @@ func _refresh_units_panel() -> void:
 		col.add_child(role_lbl)
 
 		# Health bar
-		var bar := ProgressBar.new()
-		bar.min_value = 0.0
+		var bar := _make_health_bar(0, 12)
 		bar.max_value = u_node.data.max_health
 		bar.value = u_node.data.health
-		bar.custom_minimum_size = Vector2(0, 12)
-		bar.show_percentage = false
+		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		bar.mouse_filter = Control.MOUSE_FILTER_PASS
 		col.add_child(bar)
 
@@ -637,6 +636,10 @@ func show_unit_panel(unit: Unit, screen_pos: Vector2) -> void:
 			vbox.add_child(row)
 	_unit_panel.position = screen_pos + Vector2(8, 8)
 	_unit_panel.visible = true
+
+func hide_unit_panel() -> void:
+	_unit_panel.visible = false
+
 
 func _on_draft_pressed() -> void:
 	_selected_unit.set_drafted(not _selected_unit.drafted)
@@ -739,12 +742,124 @@ func _on_inspect_pressed() -> void:
 	inspect_requested.emit()
 
 
+# ── Top HUD (drafted units) ───────────────────────────────────────────────────
+
+func _make_health_bar(w: float, h: float) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.min_value = 0.0
+	bar.max_value = 100.0
+	bar.custom_minimum_size = Vector2(w, h)
+	bar.show_percentage = false
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(0.2, 0.75, 0.25)
+	bar.add_theme_stylebox_override("fill", fill)
+	return bar
+
+
+func _build_top_hud() -> void:
+	var wrapper := CenterContainer.new()
+	wrapper.anchor_left   = 0.0
+	wrapper.anchor_right  = 1.0
+	wrapper.anchor_top    = 0.0
+	wrapper.anchor_bottom = 0.0
+	wrapper.offset_top    = 6
+	wrapper.offset_bottom = 76
+	wrapper.mouse_filter  = Control.MOUSE_FILTER_IGNORE
+	_top_hud = HBoxContainer.new()
+	_top_hud.add_theme_constant_override("separation", 8)
+	_top_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrapper.add_child(_top_hud)
+	add_child(wrapper)
+
+
+func _refresh_top_hud(drafted: Array) -> void:
+	_hud_bars.clear()
+	for c in _top_hud.get_children():
+		c.queue_free()
+	for u in drafted:
+		var u_node := u as Unit
+
+		# Fixed-size square card with white outline
+		var card := Panel.new()
+		card.custom_minimum_size = Vector2(56, 56)
+		card.clip_contents = true
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0, 0, 0, 0.4)
+		style.border_color = Color(1, 1, 1, 0.7)
+		style.set_border_width_all(1)
+		card.add_theme_stylebox_override("panel", style)
+		card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		card.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and ev.pressed:
+				camera.center_on(u_node.position)
+				get_viewport().set_input_as_handled()
+		)
+
+		# Portrait fills the whole card
+		var portrait := TextureRect.new()
+		portrait.anchor_right = 1.0
+		portrait.anchor_bottom = 1.0
+		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if u_node.data.portrait:
+			portrait.texture = u_node.data.portrait
+		card.add_child(portrait)
+
+		# Health bar pinned to bottom edge
+		var bar := _make_health_bar(0, 5)
+		bar.max_value = u_node.data.max_health
+		bar.value = u_node.data.health
+		bar.anchor_left = 0.0
+		bar.anchor_right = 1.0
+		bar.anchor_top = 1.0
+		bar.anchor_bottom = 1.0
+		bar.offset_top = -5
+		bar.offset_bottom = 0
+		card.add_child(bar)
+		_hud_bars[u] = bar
+
+		# Name just above the bar
+		var name_lbl := Label.new()
+		name_lbl.text = u_node.data.name
+		name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		name_lbl.add_theme_font_size_override("font_size", 9)
+		name_lbl.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+		name_lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+		name_lbl.add_theme_constant_override("shadow_offset_x", 1)
+		name_lbl.add_theme_constant_override("shadow_offset_y", 1)
+		name_lbl.anchor_left = 0.0
+		name_lbl.anchor_right = 1.0
+		name_lbl.anchor_top = 1.0
+		name_lbl.anchor_bottom = 1.0
+		name_lbl.offset_top = -19
+		name_lbl.offset_bottom = -5
+		card.add_child(name_lbl)
+
+		_top_hud.add_child(card)
+
+
 # ── HUD ───────────────────────────────────────────────────────────────────────
 
 func _process(_delta: float) -> void:
 	wood_label.text = "Wood: " + str(grid.wood)
+	var drafted: Array = []
 	var drafted_count := 0
 	for u in grid.get_node("Units").get_children():
 		if u is Unit and u.drafted:
+			drafted.append(u)
 			drafted_count += 1
 	drafted_label.text = "Drafted: " + str(drafted_count)
+
+	# Refresh top HUD when drafted composition changes
+	var ids: Array = drafted.map(func(u): return u.get_instance_id())
+	if ids != _last_drafted_ids:
+		_last_drafted_ids = ids
+		_refresh_top_hud(drafted)
+
+	# Update health bars live
+	for u in _hud_bars:
+		if is_instance_valid(u) and is_instance_valid(_hud_bars[u]):
+			(_hud_bars[u] as ProgressBar).value = (u as Unit).data.health

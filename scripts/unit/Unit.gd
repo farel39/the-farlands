@@ -52,6 +52,10 @@ const BUBBLE_DURATION := 5.0
 const BUBBLE_FADE_TIME := 1.0
 const BUBBLE_COOLDOWN := 30.0
 
+var _idle_speech_timer: float = 0.0
+const IDLE_SPEECH_MIN := 60.0
+const IDLE_SPEECH_MAX := 120.0
+
 var task_queue: Array = []
 var _arrive_callback: Callable
 var drafted: bool = false:
@@ -67,6 +71,7 @@ func _ready() -> void:
 	grid = get_parent().get_parent() as Grid
 	pf = grid.get_node("Pathfinding")
 	gui = get_tree().root.get_node("Main/CanvasLayer/GUI")
+	_idle_speech_timer = randf_range(IDLE_SPEECH_MIN, IDLE_SPEECH_MAX)
 	_shadow = Sprite2D.new()
 	_shadow.centered = false
 	_shadow.modulate = Color(0, 0, 0, 0.35)
@@ -95,7 +100,7 @@ func _apply_sprite(tex: Texture2D, flip_h: bool) -> void:
 		_shadow.texture = tex
 		_shadow.flip_h = flip_h
 		_shadow.scale = Vector2(s * 1.1, s * 0.18)
-		_shadow.position = Vector2(sprite.position.x - scaled_w * 0.05 + 8, grid.cell_size * 0.80)
+		_shadow.position = Vector2(sprite.position.x - scaled_w * 0.05 + 8, grid.cell_size * 0.74)
 
 func _draw() -> void:
 	if drafted:
@@ -178,6 +183,17 @@ func _process(delta: float) -> void:
 	_tick_gather(delta)
 	_tick_build(delta)
 	_tick_bubble(delta)
+	_tick_idle_speech(delta)
+
+
+func _tick_idle_speech(delta: float) -> void:
+	if drafted or not path.is_empty() or is_busy():
+		_idle_speech_timer = randf_range(IDLE_SPEECH_MIN, IDLE_SPEECH_MAX)
+		return
+	_idle_speech_timer -= delta
+	if _idle_speech_timer <= 0.0:
+		_idle_speech_timer = randf_range(IDLE_SPEECH_MIN, IDLE_SPEECH_MAX)
+		became_idle.emit()
 
 
 func _tick_walk_anim(delta: float) -> void:

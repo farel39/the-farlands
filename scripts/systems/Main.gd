@@ -306,10 +306,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 	if _inspect_popup and _inspect_popup.visible:
-		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		if event is InputEventMouseButton and event.pressed:
 			_inspect_popup.visible = false
-			get_viewport().set_input_as_handled()
-			return
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				get_viewport().set_input_as_handled()
+				return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		gui.hide_unit_panel()
 	if grid.placement_mode:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
@@ -341,6 +344,7 @@ func _handle_click() -> void:
 	var grid_pos := grid.worldToGrid(get_global_mouse_position())
 	var mouse_screen := get_viewport().get_mouse_position()
 	if not grid.grid.has(grid_pos):
+		_set_selection([])
 		return
 
 	# Clicked on a unit?
@@ -349,6 +353,9 @@ func _handle_click() -> void:
 			_set_selection([u])
 			gui.show_unit_panel(u, mouse_screen)
 			return
+
+	# Clicked anywhere else — deselect
+	_set_selection([])
 
 	var cell: CellData = grid.grid[grid_pos]
 	if cell.occupier == "Tree":
@@ -366,14 +373,6 @@ func _handle_click() -> void:
 
 	if not cell.navigable:
 		return
-
-	# Move command — apply to all drafted units in formation
-	var drafted := all_units.filter(func(u): return u.drafted)
-	if drafted.is_empty():
-		return
-	var targets := _formation(grid_pos, drafted.size())
-	for i in drafted.size():
-		drafted[i].draft_move_to(targets[i])
 
 
 func _finish_box_select() -> void:
@@ -494,12 +493,10 @@ func _on_unit_idle(u: Unit) -> void:
 
 
 func _handle_right_click() -> void:
-	var drafted := all_units.filter(func(u): return u.drafted)
-	if drafted.is_empty():
-		return
 	var grid_pos := grid.worldToGrid(get_global_mouse_position())
 	if not grid.grid.has(grid_pos):
 		return
+	var drafted := all_units.filter(func(u): return u.drafted)
 	var occupier: String = grid.grid[grid_pos].occupier if grid.grid[grid_pos].occupier != null else ""
 	var inspect_key: String = ""
 	var anchor: Vector2 = grid_pos
@@ -517,6 +514,12 @@ func _handle_right_click() -> void:
 		anchor = grid.monolith_pos
 		anchor_size = Vector2i(2, 2)
 	else:
+		# Empty navigable ground — move drafted units
+		if grid.grid[grid_pos].navigable:
+			if not drafted.is_empty():
+				var targets := _formation(grid_pos, drafted.size())
+				for i in drafted.size():
+					drafted[i].draft_move_to(targets[i])
 		return
 	# Pick unit: selected drafted first, else closest drafted to anchor
 	var best: Unit = null
