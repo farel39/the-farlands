@@ -2,7 +2,6 @@
 
 [ext_resource type="Script" uid="uid://b2p7dkwgyf23" path="res://scripts/systems/Main.gd" id="1_8llo8"]
 [ext_resource type="Script" uid="uid://s28p5sglm4aw" path="res://scripts/systems/Grid.gd" id="2_brr1f"]
-[ext_resource type="Texture2D" uid="uid://3l2l7i85px5" path="res://art/environment/dirt.png" id="2_r0gd4"]
 [ext_resource type="PackedScene" uid="uid://tdqsa8iv10of" path="res://scenes/Unit.tscn" id="3_d463r"]
 [ext_resource type="Texture2D" uid="uid://v7e8imimj5dw" path="res://art/environment/grass.png" id="3_krkin"]
 [ext_resource type="Script" uid="uid://bgtxtdf4nsyei" path="res://scripts/systems/Camera.gd" id="3_pkilc"]
@@ -15,7 +14,7 @@
 [ext_resource type="Script" uid="uid://dcnsnwm7bloko" path="res://scripts/ui/GUI.gd" id="12_guisc"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1jtt4"]
-texture = ExtResource("2_r0gd4")
+texture = ExtResource("11_adirt")
 texture_region_size = Vector2i(128, 128)
 0:0/0 = 0
 

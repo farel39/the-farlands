@@ -14,13 +14,31 @@ var harvest_target: Vector2 = Vector2(-1, -1)
 var build_target: Vector2 = Vector2(-1, -1)
 var gather_target: Vector2 = Vector2(-1, -1)
 var gather_items: Dictionary = {}
-var _dest: Vector2 = Vector2(-1, -1)  # currently reserved destination cell
+var _dest: Vector2 = Vector2(-1, -1)
+
+const GATHER_DURATION := 1.5  # seconds to stand at source before picking up
+var _gather_timer: float = -1.0
+
+var _build_timer: float = -1.0
+var _build_duration: float = 1.0
 
 var _tex_down: Texture2D = null
 var _tex_side: Texture2D = null
 var _tex_up: Texture2D = null
 var _shadow: Sprite2D
-var task_queue: Array = []  # each entry: { "type": String, "pos": Vector2, ... }
+
+var _walk_frames_side: Array = []
+var _walk_frames_up: Array = []
+var _walk_frame_idx: int = 0
+var _walk_frame_timer: float = 0.0
+var _is_walking_side: bool = false
+var _is_walking_up: bool = false
+var _walk_flip_h: bool = false
+var _walk_idle_frame_side: int = 34
+var _walk_loop_start_up: int = 0
+var walk_fps_side: float = 24.0
+var walk_fps_up: float = 24.0
+var task_queue: Array = []
 var _arrive_callback: Callable
 var drafted: bool = false:
 	set(value):
@@ -72,8 +90,77 @@ func _draw() -> void:
 	if selected:
 		draw_rect(Rect2(2, 2, 124, 124), Color(0.2, 0.8, 0.2, 1.0), false, 2.0)
 
+func set_walk_frames_side(frames: Array) -> void:
+	_walk_frames_side = frames
+	_walk_frame_idx = 0
+	_walk_frame_timer = 0.0
+
+
+func set_walk_frames_up(frames: Array) -> void:
+	_walk_frames_up = frames
+
+
 func _process(delta: float) -> void:
 	move(delta)
+	_tick_walk_anim(delta)
+	_tick_gather(delta)
+	_tick_build(delta)
+
+
+func _tick_walk_anim(delta: float) -> void:
+	if not _is_walking_side and not _is_walking_up:
+		return
+	var frames: Array = _walk_frames_side if _is_walking_side else _walk_frames_up
+	if frames.is_empty():
+		return
+	var fps: float = walk_fps_side if _is_walking_side else walk_fps_up
+	var loop_start: int = _walk_loop_start_up if _is_walking_up else 0
+	if _walk_frame_idx < loop_start:
+		_walk_frame_idx = loop_start
+	_walk_frame_timer += delta
+	while _walk_frame_timer >= 1.0 / fps:
+		_walk_frame_timer -= 1.0 / fps
+		var range_size: int = frames.size() - loop_start
+		_walk_frame_idx = loop_start + (_walk_frame_idx - loop_start + 1) % range_size
+	_apply_sprite(frames[_walk_frame_idx], _walk_flip_h)
+
+
+func _tick_gather(delta: float) -> void:
+	if _gather_timer < 0.0:
+		return
+	_gather_timer -= delta
+	if _gather_timer > 0.0:
+		return
+	_gather_timer = -1.0
+	var actual: Dictionary = {}
+	for item in gather_items:
+		var available := _count_at_source(gather_target, item)
+		var take: int = min(gather_items[item], available)
+		if take > 0:
+			actual[item] = take
+	if not actual.is_empty():
+		grid.take_from_inventory(gather_target, actual)
+		for item in actual:
+			data.inventory[item] = data.inventory.get(item, 0) + actual[item]
+	gather_target = Vector2(-1, -1)
+	gather_items = {}
+	_start_next_task()
+
+
+func _tick_build(delta: float) -> void:
+	if _build_timer < 0.0:
+		return
+	_build_timer -= delta
+	var t: float = 1.0 - clamp(_build_timer / _build_duration, 0.0, 1.0)
+	grid.set_blueprint_progress(build_target, t)
+	if _build_timer > 0.0:
+		return
+	_build_timer = -1.0
+	var bt := build_target
+	build_target = Vector2(-1, -1)
+	grid.complete_blueprint(bt)
+	_start_next_task()
+
 
 func move(delta: float) -> void:
 	if path.is_empty():
@@ -85,10 +172,26 @@ func move(delta: float) -> void:
 		if _tex_down and _tex_side:
 			var dir := to_next.normalized()
 			if abs(dir.x) > abs(dir.y):
-				_apply_sprite(_tex_side, dir.x < 0)
-			elif dir.y < 0 and _tex_up:
-				_apply_sprite(_tex_up, false)
+				if not _is_walking_side:
+					_walk_frame_idx = 0
+					_walk_frame_timer = 0.0
+				_is_walking_side = true
+				_is_walking_up = false
+				_walk_flip_h = dir.x < 0
+				if _walk_frames_side.is_empty():
+					_apply_sprite(_tex_side, dir.x < 0)
+			elif dir.y < 0:
+				if not _is_walking_up:
+					_walk_frame_idx = 0
+					_walk_frame_timer = 0.0
+				_is_walking_side = false
+				_is_walking_up = true
+				_walk_flip_h = false
+				if _walk_frames_up.is_empty() and _tex_up:
+					_apply_sprite(_tex_up, false)
 			else:
+				_is_walking_side = false
+				_is_walking_up = false
 				_apply_sprite(_tex_down, false)
 		if dist <= remaining:
 			position = path[0]
@@ -98,6 +201,17 @@ func move(delta: float) -> void:
 			position += to_next.normalized() * remaining
 			remaining = 0.0
 	if path.is_empty():
+		# Show idle pose when stopping
+		if _is_walking_side:
+			if _walk_frames_side.size() > _walk_idle_frame_side:
+				_apply_sprite(_walk_frames_side[_walk_idle_frame_side], _walk_flip_h)
+			_walk_frame_idx = 0
+		elif _is_walking_up:
+			if not _walk_frames_up.is_empty():
+				_apply_sprite(_walk_frames_up[0], false)
+			_walk_frame_idx = 0
+		_is_walking_side = false
+		_is_walking_up = false
 		if _dest != Vector2(-1, -1):
 			grid.release_cell(_dest, self)
 			_dest = Vector2(-1, -1)
@@ -106,30 +220,22 @@ func move(delta: float) -> void:
 			_arrive_callback = Callable()
 			cb.call()
 		if gather_target != Vector2(-1, -1):
-			# Pick up items from the source inventory
-			var actual := {}
-			for item in gather_items:
-				var available := _count_at_source(gather_target, item)
-				var take: int = min(gather_items[item], available)
-				if take > 0:
-					actual[item] = take
-			if not actual.is_empty():
-				grid.take_from_inventory(gather_target, actual)
-				for item in actual:
-					data.inventory[item] = data.inventory.get(item, 0) + actual[item]
-			gather_target = Vector2(-1, -1)
-			gather_items = {}
+			# Start gather delay — _tick_gather handles completion
+			_gather_timer = GATHER_DURATION
+			return
 		if harvest_target != Vector2(-1, -1):
 			grid.harvest_tree(harvest_target)
 			harvest_target = Vector2(-1, -1)
 		if build_target != Vector2(-1, -1):
-			grid.complete_blueprint(build_target)
-			# Consume materials from unit inventory
-			if grid.blueprints.has(build_target) == false:
-				var def_cost: Dictionary = {}  # blueprint already removed by complete_blueprint
-				# Cost was already consumed when gathering; nothing to do here
-				pass
-			build_target = Vector2(-1, -1)
+			# Compute build duration from cost total, start progress bar
+			var cost_total := 0
+			if grid.blueprints.has(build_target):
+				for v in grid.blueprints[build_target].def.cost.values():
+					cost_total += v
+			_build_duration = max(2.0, float(cost_total) * 0.8)
+			_build_timer = _build_duration
+			grid.start_blueprint_build(build_target)
+			return
 		_start_next_task()
 
 
@@ -171,11 +277,15 @@ func queue_build(blueprint_pos: Vector2) -> void:
 func set_drafted(value: bool) -> void:
 	drafted = value
 	if not path.is_empty():
-		# Let the unit finish stepping to the next waypoint rather than teleporting.
 		if _dest != Vector2(-1, -1):
 			grid.release_cell(_dest, self)
 			_dest = Vector2(-1, -1)
 		path = PackedVector2Array([path[0]])
+	# Cancel in-progress timers
+	_gather_timer = -1.0
+	if _build_timer >= 0.0:
+		_build_timer = -1.0
+		grid.cancel_blueprint_build(build_target)
 	if not drafted:
 		harvest_target = Vector2(-1, -1)
 		build_target = Vector2(-1, -1)
@@ -183,7 +293,6 @@ func set_drafted(value: bool) -> void:
 		gather_items = {}
 		if path.is_empty():
 			_start_next_task()
-		# else: move() calls _start_next_task() when the unit reaches path[0]
 
 
 func _start_next_task() -> void:
@@ -194,7 +303,6 @@ func _start_next_task() -> void:
 		return
 	var unit_grid := grid.worldToGrid(position)
 
-	# If there are gather tasks queued, run them in order (front-to-back).
 	var has_gather := false
 	for t in task_queue:
 		if t.type == "gather":
@@ -205,7 +313,6 @@ func _start_next_task() -> void:
 	if has_gather:
 		task = task_queue.pop_front()
 	else:
-		# Pick closest task.
 		var best_idx := 0
 		var best_dist := INF
 		for i in task_queue.size():
@@ -225,10 +332,9 @@ func _start_next_task() -> void:
 			path = _set_dest(dest)
 
 		"build":
-			# Check if unit has all required materials; if not, queue gather tasks first.
 			var missing := _plan_gather(task.pos)
 			if not missing.is_empty():
-				task_queue.push_front(task)  # re-queue build after gather tasks
+				task_queue.push_front(task)
 				for src_pos in missing:
 					task_queue.push_front({"type": "gather", "pos": src_pos, "items": missing[src_pos]})
 				_start_next_task()
@@ -254,13 +360,10 @@ func _start_next_task() -> void:
 			path = _set_dest(dest)
 
 
-# Returns {source_pos: {item: amount}} of what needs to be gathered for a build.
-# Returns empty dict if unit already holds all required materials.
 func _plan_gather(blueprint_pos: Vector2) -> Dictionary:
 	if not grid.blueprints.has(blueprint_pos):
 		return {}
 	var cost: Dictionary = grid.blueprints[blueprint_pos].def.cost
-	# Compute what is still needed beyond what the unit carries.
 	var needed: Dictionary = {}
 	for item in cost:
 		var have: int = data.inventory.get(item, 0)
@@ -269,8 +372,7 @@ func _plan_gather(blueprint_pos: Vector2) -> Dictionary:
 			needed[item] = req - have
 	if needed.is_empty():
 		return {}
-	# Map needed items to sources.
-	var plan: Dictionary = {}  # source_pos → {item: amount}
+	var plan: Dictionary = {}
 	var sources := grid.get_inventory_sources()
 	for item in needed:
 		var remaining: int = needed[item]
@@ -301,7 +403,7 @@ func _closest_adjacent(tree_root: Vector2) -> Vector2:
 	for dx in range(-1, 4):
 		for dy in range(-1, 4):
 			if dx >= 0 and dx <= 2 and dy >= 0 and dy <= 2:
-				continue  # skip the 3x3 interior
+				continue
 			var neighbor := tree_root + Vector2(dx, dy)
 			if grid.grid.has(neighbor) and grid.grid[neighbor].navigable and not grid.is_cell_reserved(neighbor, self):
 				var d := unit_grid.distance_to(neighbor)
@@ -311,7 +413,6 @@ func _closest_adjacent(tree_root: Vector2) -> Vector2:
 	return best
 
 
-# Find nearest navigable cell adjacent to a source (ship is 4×4, crates are 1×1).
 func _closest_adjacent_to_source(source_pos: Vector2) -> Vector2:
 	var best := Vector2(-1, -1)
 	var best_dist := INF
@@ -350,7 +451,12 @@ func _build_path(grid_pos: Vector2) -> PackedVector2Array:
 
 
 func is_busy() -> bool:
-	return not task_queue.is_empty() or harvest_target != Vector2(-1, -1) or build_target != Vector2(-1, -1) or gather_target != Vector2(-1, -1)
+	return not task_queue.is_empty() \
+		or harvest_target != Vector2(-1, -1) \
+		or build_target != Vector2(-1, -1) \
+		or gather_target != Vector2(-1, -1) \
+		or _build_timer >= 0.0 \
+		or _gather_timer >= 0.0
 
 
 func get_grid_pos() -> Vector2:

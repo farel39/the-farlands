@@ -9,6 +9,7 @@ const DEFS: Dictionary = {
 		"size":     Vector2i(2, 2),
 		"navigable": false,
 		"occupier": "Fabricator",
+		"shadow":   false,
 	},
 	"Wood Wall": {
 		"category": "Structures",

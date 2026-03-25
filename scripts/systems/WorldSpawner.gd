@@ -125,6 +125,7 @@ static func spawn_trees(g: Grid) -> void:
 			var mat: ShaderMaterial = dirt_base_mat.duplicate()
 			mat.set_shader_parameter("cardinal_mask", mask)
 			mat.set_shader_parameter("diag_mask", diag)
+			mat.set_shader_parameter("fade_width", 0.55)
 			dirt_sprite.material = mat
 		g.add_child(dirt_sprite)
 
@@ -134,9 +135,22 @@ static func spawn_trees(g: Grid) -> void:
 		var pos: Vector2 = td.pos
 		var local_dirt: Dictionary = td.local_dirt
 
+		var centre_pos := g.gridToWorld(pos) + Vector2(g.cell_size * 1.5, g.cell_size * 1.5)
+		var tree_s := float(g.cell_size * 3) / float(tree_texture.get_width())
+
+		var shadow := Sprite2D.new()
+		shadow.texture = tree_texture
+		shadow.position = centre_pos + Vector2(g.cell_size * 0.15, g.cell_size * 0.7)
+		shadow.scale = Vector2(tree_s * 1.1, tree_s * 0.22)
+		shadow.modulate = Color(0, 0, 0, 0.35)
+		shadow.z_index = -1
+		g.add_child(shadow)
+		g.shadow_sprites.append(shadow)
+
 		var sprite := Sprite2D.new()
 		sprite.texture = tree_texture
-		sprite.position = g.gridToWorld(pos) + Vector2(g.cell_size * 1.5, g.cell_size * 1.5)
+		sprite.position = centre_pos
+		sprite.scale = Vector2(tree_s, tree_s)
 		g.add_child(sprite)
 
 		var light := PointLight2D.new()
@@ -295,6 +309,7 @@ static func spawn_red_trees(g: Grid) -> void:
 				var mat: ShaderMaterial = dirt_base_mat.duplicate()
 				mat.set_shader_parameter("cardinal_mask", mask)
 				mat.set_shader_parameter("diag_mask", diag)
+				mat.set_shader_parameter("fade_width", 0.55)
 				dirt_sprite.material = mat
 			g.add_child(dirt_sprite)
 
@@ -609,7 +624,7 @@ static func spawn_rocks(g: Grid) -> void:
 		for dx in range(-CLUSTER_RADIUS, CLUSTER_RADIUS + 1):
 			for dy in range(-CLUSTER_RADIUS, CLUSTER_RADIUS + 1):
 				var c: Vector2 = center + Vector2(dx, dy)
-				if g.grid.has(c) and g.grid[c].occupier == null and not g.water_tiles.has(c):
+				if g.grid.has(c) and g.grid[c].occupier == null and not g.water_tiles.has(c) and not g.dirt_tiles.has(c):
 					nearby.append(c)
 		nearby.shuffle()
 		var count := rng.randi_range(2, 3)
@@ -643,7 +658,7 @@ static func spawn_rocks(g: Grid) -> void:
 		var dist := rng.randf_range(0.3, float(CLUSTER_RADIUS) + 0.8)
 		var offset := Vector2(cos(angle), sin(angle)) * dist * g.cell_size
 		var pebble_cell := g.worldToGrid(g.gridToWorld(center) + offset)
-		if not g.grid.has(pebble_cell) or g.water_tiles.has(pebble_cell):
+		if not g.grid.has(pebble_cell) or g.water_tiles.has(pebble_cell) or g.dirt_tiles.has(pebble_cell):
 			continue
 		var pebble := Sprite2D.new()
 		pebble.texture = tex_pebbles
@@ -795,9 +810,11 @@ static func spawn_tide_pools(g: Grid) -> void:
 					g.grid[c].navigable = false
 			var cp: Vector2 = g.gridToWorld(pp) + Vector2(g.cell_size, g.cell_size)
 			var pool_sprite := Sprite2D.new()
-			pool_sprite.texture = shuffled_textures[pi % 3]
+			var pool_tex: Texture2D = shuffled_textures[pi % 3]
+			pool_sprite.texture = pool_tex
 			pool_sprite.position = cp
-			pool_sprite.scale = Vector2(1.0, 1.0)
+			var pool_scale := float(g.cell_size) * 2.0 / float(pool_tex.get_width())
+			pool_sprite.scale = Vector2(pool_scale, pool_scale)
 			pool_sprite.z_index = 0
 			g.add_child(pool_sprite)
 			var light := PointLight2D.new()
@@ -834,7 +851,8 @@ static func spawn_tide_pools(g: Grid) -> void:
 			var rock_sprite := Sprite2D.new()
 			rock_sprite.texture = rock_tex
 			rock_sprite.position = rp
-			rock_sprite.scale = Vector2(1.0, 1.0)
+			var tide_rock_scale := float(g.cell_size) * 2.0 / float(rock_tex.get_height())
+			rock_sprite.scale = Vector2(tide_rock_scale, tide_rock_scale)
 			rock_sprite.z_index = 0
 			var rock_mat := ShaderMaterial.new()
 			rock_mat.shader = fade_shader
@@ -863,10 +881,12 @@ static func spawn_tide_pools(g: Grid) -> void:
 			var ore_tex: Texture2D = iron_tex if used_ore_cells.size() <= ore_count else copper_tex
 			var ore_pos2: Vector2 = g.gridToWorld(gc) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
 
+			var ore_scale := float(g.cell_size) * 0.9 / float(ore_tex.get_height())
+
 			var ore_shadow := Sprite2D.new()
 			ore_shadow.texture = ore_tex
-			ore_shadow.position = ore_pos2 + Vector2(10, 12)
-			ore_shadow.scale = Vector2(1.1, 0.55)
+			ore_shadow.position = ore_pos2 + Vector2(8, 10)
+			ore_shadow.scale = Vector2(ore_scale * 1.1, ore_scale * 0.45)
 			ore_shadow.modulate = Color(0, 0, 0, 0.35)
 			g.add_child(ore_shadow)
 			g.shadow_sprites.append(ore_shadow)
@@ -874,7 +894,7 @@ static func spawn_tide_pools(g: Grid) -> void:
 			var ore_sprite := Sprite2D.new()
 			ore_sprite.texture = ore_tex
 			ore_sprite.position = ore_pos2
-			ore_sprite.scale = Vector2(1.0, 1.0)
+			ore_sprite.scale = Vector2(ore_scale, ore_scale)
 			g.add_child(ore_sprite)
 
 
@@ -935,7 +955,7 @@ static func spawn_monolith(g: Grid) -> void:
 	var glow := Sprite2D.new()
 	glow.texture = glow_tex
 	glow.modulate = Color(0.5, 0.1, 1.0, 0.25)
-	var glow_size := float(g.cell_size * 6)
+	var glow_size := float(g.cell_size * 3)
 	glow.scale = Vector2(glow_size / 256.0, glow_size / 256.0)
 	glow.position = centre_world
 	glow.z_index = 0
@@ -946,7 +966,7 @@ static func spawn_monolith(g: Grid) -> void:
 	light.texture = light_tex
 	light.color = Color(0.55, 0.1, 1.0)
 	light.energy = 0.0
-	light.texture_scale = 10.0
+	light.texture_scale = 5.0
 	sprite.add_child(light)
 	g.red_tree_lights.append(light)
 

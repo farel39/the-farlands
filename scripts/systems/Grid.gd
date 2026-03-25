@@ -283,17 +283,20 @@ func complete_blueprint(grid_pos: Vector2) -> void:
 			if grid.has(c):
 				grid[c].occupier = def.occupier
 				grid[c].navigable = def.navigable
-	# Add shadow under the completed building
-	var tex := sprite.texture
-	var s := sprite.scale.x
-	var shadow := Sprite2D.new()
-	shadow.texture = tex
-	shadow.scale = Vector2(s * 1.1, s * 0.2)
-	shadow.position = sprite.position + Vector2(size.x * cell_size * 0.06, size.y * cell_size * 0.72)
-	shadow.modulate = Color(0, 0, 0, 0.35)
-	shadow.z_index = sprite.z_index - 1
-	add_child(shadow)
-	shadow_sprites.append(shadow)
+	# Remove progress bar if present.
+	cancel_blueprint_build(grid_pos)
+	# Add shadow under the completed building (unless the def opts out).
+	if def.get("shadow", true):
+		var tex := sprite.texture
+		var s := sprite.scale.x
+		var shadow := Sprite2D.new()
+		shadow.texture = tex
+		shadow.scale = Vector2(s * 1.1, s * 0.2)
+		shadow.position = sprite.position + Vector2(size.x * cell_size * 0.06, size.y * cell_size * 0.72)
+		shadow.modulate = Color(0, 0, 0, 0.35)
+		shadow.z_index = sprite.z_index - 1
+		add_child(shadow)
+		shadow_sprites.append(shadow)
 	blueprints.erase(grid_pos)
 
 
@@ -325,6 +328,59 @@ func take_from_inventory(source_pos: Vector2, items: Dictionary) -> void:
 			inv[item] = max(0, inv[item] - amount)
 			if inv[item] == 0:
 				inv.erase(item)
+
+
+# Shows a progress bar above the blueprint while it's being built.
+func start_blueprint_build(grid_pos: Vector2) -> void:
+	if not blueprints.has(grid_pos):
+		return
+	var def: Dictionary = blueprints[grid_pos].def
+	var size: Vector2i = def.size
+	var bar_left := gridToWorld(grid_pos)
+	var bar_w := float(size.x * cell_size)
+	var bar_y := bar_left.y - 16.0
+
+	var bar_bg := Line2D.new()
+	bar_bg.add_point(Vector2(bar_left.x, bar_y))
+	bar_bg.add_point(Vector2(bar_left.x + bar_w, bar_y))
+	bar_bg.width = 10.0
+	bar_bg.default_color = Color(0.1, 0.1, 0.1, 0.85)
+	bar_bg.z_index = 20
+	add_child(bar_bg)
+
+	var bar_fill := Line2D.new()
+	bar_fill.add_point(Vector2(bar_left.x, bar_y))
+	bar_fill.add_point(Vector2(bar_left.x, bar_y))
+	bar_fill.width = 10.0
+	bar_fill.default_color = Color(0.2, 0.85, 0.3, 1.0)
+	bar_fill.z_index = 21
+	add_child(bar_fill)
+
+	blueprints[grid_pos]["bar_bg"]   = bar_bg
+	blueprints[grid_pos]["bar_fill"] = bar_fill
+	blueprints[grid_pos]["bar_x"]    = bar_left.x
+	blueprints[grid_pos]["bar_y"]    = bar_y
+	blueprints[grid_pos]["bar_w"]    = bar_w
+
+
+func set_blueprint_progress(grid_pos: Vector2, t: float) -> void:
+	if not blueprints.has(grid_pos) or not blueprints[grid_pos].has("bar_fill"):
+		return
+	var bp: Dictionary = blueprints[grid_pos]
+	var fill := bp["bar_fill"] as Line2D
+	fill.set_point_position(1, Vector2(float(bp["bar_x"]) + float(bp["bar_w"]) * t, float(bp["bar_y"])))
+
+
+func cancel_blueprint_build(grid_pos: Vector2) -> void:
+	if not blueprints.has(grid_pos):
+		return
+	var bp: Dictionary = blueprints[grid_pos]
+	if bp.has("bar_bg"):
+		(bp["bar_bg"] as Line2D).queue_free()
+		bp.erase("bar_bg")
+	if bp.has("bar_fill"):
+		(bp["bar_fill"] as Line2D).queue_free()
+		bp.erase("bar_fill")
 
 
 func get_blueprint_adjacent(grid_pos: Vector2) -> Array:
