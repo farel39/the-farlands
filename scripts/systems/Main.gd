@@ -164,12 +164,20 @@ func _spawn_units() -> void:
 	for i in range(1, 49):
 		var frame_path := "res://art/characters/the engineer walking animation facing up frames/frame_%04d.png" % i
 		engineer_walk_up_frames.append(load(frame_path) as Texture2D)
+	var engineer_walk_down_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the engineer walking animation downward frames/frame_%04d.png" % i
+		engineer_walk_down_frames.append(load(frame_path) as Texture2D)
 
 	# Preload pilot walk frames
 	var pilot_walk_frames: Array = []
 	for i in range(1, 49):
 		var frame_path := "res://art/characters/the pilot walking animation sideway frames/frame_%04d.png" % i
 		pilot_walk_frames.append(load(frame_path) as Texture2D)
+	var pilot_walk_up_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the pilot walking animation facing up frames/frame_%04d.png" % i
+		pilot_walk_up_frames.append(load(frame_path) as Texture2D)
 
 	# Preload medic walk frames
 	var medic_walk_frames: Array = []
@@ -177,7 +185,7 @@ func _spawn_units() -> void:
 		var frame_path := "res://art/characters/the medic walking animation sideway frames/frame_%04d.png" % i
 		medic_walk_frames.append(load(frame_path) as Texture2D)
 	var medic_walk_up_frames: Array = []
-	for i in range(1, 38):
+	for i in range(1, 39):
 		var frame_path := "res://art/characters/the medic walking animation facing up frames/frame_%04d.png" % i
 		medic_walk_up_frames.append(load(frame_path) as Texture2D)
 
@@ -195,16 +203,22 @@ func _spawn_units() -> void:
 		if c["name"] == "Raya":
 			u.set_walk_frames_side(engineer_walk_frames)
 			u.set_walk_frames_up(engineer_walk_up_frames)
+			u.set_walk_frames_down(engineer_walk_down_frames)
+			u._walk_loop_start_up = 16
+			u._walk_loop_start_down = 29
 		elif c["name"] == "Mira":
 			u.set_walk_frames_side(medic_walk_frames)
 			u.set_walk_frames_up(medic_walk_up_frames)
 			u._walk_idle_frame_side = 2
-			u._walk_loop_start_up = 2
+			u._walk_loop_start_up = 15
+			u._walk_up_initial_frame = 2
 			u.walk_fps_side = 12.0
 			u.walk_fps_up = 30.0
 		elif c["name"] == "Dax":
 			u.set_walk_frames_side(pilot_walk_frames)
+			u.set_walk_frames_up(pilot_walk_up_frames)
 			u._walk_idle_frame_side = 7
+			u._walk_loop_start_up = 13
 			u.walk_fps_side = 12.0
 		all_units.append(u)
 		u.became_idle.connect(_assign_tasks)

@@ -29,15 +29,22 @@ var _shadow: Sprite2D
 
 var _walk_frames_side: Array = []
 var _walk_frames_up: Array = []
+var _walk_frames_down: Array = []
 var _walk_frame_idx: int = 0
 var _walk_frame_timer: float = 0.0
 var _is_walking_side: bool = false
 var _is_walking_up: bool = false
+var _is_walking_down: bool = false
 var _walk_flip_h: bool = false
 var _walk_idle_frame_side: int = 34
+var _walk_idle_frame_down: int = 0
 var _walk_loop_start_up: int = 0
+var _walk_loop_start_down: int = 0
+var _walk_up_initial_frame: int = 0
+var _walk_down_initial_frame: int = 0
 var walk_fps_side: float = 24.0
 var walk_fps_up: float = 24.0
+var walk_fps_down: float = 24.0
 var task_queue: Array = []
 var _arrive_callback: Callable
 var drafted: bool = false:
@@ -100,6 +107,12 @@ func set_walk_frames_up(frames: Array) -> void:
 	_walk_frames_up = frames
 
 
+func set_walk_frames_down(frames: Array) -> void:
+	_walk_frames_down = frames
+	if frames.size() > _walk_idle_frame_down:
+		_apply_sprite(frames[_walk_idle_frame_down], false)
+
+
 func _process(delta: float) -> void:
 	move(delta)
 	_tick_walk_anim(delta)
@@ -108,20 +121,32 @@ func _process(delta: float) -> void:
 
 
 func _tick_walk_anim(delta: float) -> void:
-	if not _is_walking_side and not _is_walking_up:
+	if not _is_walking_side and not _is_walking_up and not _is_walking_down:
 		return
-	var frames: Array = _walk_frames_side if _is_walking_side else _walk_frames_up
+	var frames: Array
+	var fps: float
+	var loop_start: int
+	if _is_walking_side:
+		frames = _walk_frames_side
+		fps = walk_fps_side
+		loop_start = 0
+	elif _is_walking_up:
+		frames = _walk_frames_up
+		fps = walk_fps_up
+		loop_start = _walk_loop_start_up
+	else:
+		frames = _walk_frames_down
+		fps = walk_fps_down
+		loop_start = _walk_loop_start_down
 	if frames.is_empty():
 		return
-	var fps: float = walk_fps_side if _is_walking_side else walk_fps_up
-	var loop_start: int = _walk_loop_start_up if _is_walking_up else 0
-	if _walk_frame_idx < loop_start:
-		_walk_frame_idx = loop_start
 	_walk_frame_timer += delta
 	while _walk_frame_timer >= 1.0 / fps:
 		_walk_frame_timer -= 1.0 / fps
-		var range_size: int = frames.size() - loop_start
-		_walk_frame_idx = loop_start + (_walk_frame_idx - loop_start + 1) % range_size
+		var next: int = _walk_frame_idx + 1
+		if next >= frames.size():
+			next = loop_start
+		_walk_frame_idx = next
 	_apply_sprite(frames[_walk_frame_idx], _walk_flip_h)
 
 
@@ -177,22 +202,30 @@ func move(delta: float) -> void:
 					_walk_frame_timer = 0.0
 				_is_walking_side = true
 				_is_walking_up = false
+				_is_walking_down = false
 				_walk_flip_h = dir.x < 0
 				if _walk_frames_side.is_empty():
 					_apply_sprite(_tex_side, dir.x < 0)
 			elif dir.y < 0:
 				if not _is_walking_up:
-					_walk_frame_idx = 0
+					_walk_frame_idx = _walk_up_initial_frame
 					_walk_frame_timer = 0.0
 				_is_walking_side = false
 				_is_walking_up = true
+				_is_walking_down = false
 				_walk_flip_h = false
 				if _walk_frames_up.is_empty() and _tex_up:
 					_apply_sprite(_tex_up, false)
 			else:
+				if not _is_walking_down:
+					_walk_frame_idx = _walk_down_initial_frame
+					_walk_frame_timer = 0.0
 				_is_walking_side = false
 				_is_walking_up = false
-				_apply_sprite(_tex_down, false)
+				_is_walking_down = true
+				_walk_flip_h = false
+				if _walk_frames_down.is_empty():
+					_apply_sprite(_tex_down, false)
 		if dist <= remaining:
 			position = path[0]
 			path.remove_at(0)
@@ -210,8 +243,13 @@ func move(delta: float) -> void:
 			if not _walk_frames_up.is_empty():
 				_apply_sprite(_walk_frames_up[0], false)
 			_walk_frame_idx = 0
+		elif _is_walking_down:
+			if _walk_frames_down.size() > _walk_idle_frame_down:
+				_apply_sprite(_walk_frames_down[_walk_idle_frame_down], false)
+			_walk_frame_idx = 0
 		_is_walking_side = false
 		_is_walking_up = false
+		_is_walking_down = false
 		if _dest != Vector2(-1, -1):
 			grid.release_cell(_dest, self)
 			_dest = Vector2(-1, -1)
