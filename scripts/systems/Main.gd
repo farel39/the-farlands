@@ -364,8 +364,10 @@ func _handle_click() -> void:
 		return
 
 	# Clicked on a unit?
+	var click_world := get_global_mouse_position()
 	for u in all_units:
-		if grid_pos == grid.worldToGrid(u.position):
+		var unit_center: Vector2 = u.position + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+		if click_world.distance_to(unit_center) < grid.cell_size * 0.55:
 			_set_selection([u])
 			gui.show_unit_panel(u, mouse_screen)
 			return
@@ -530,12 +532,10 @@ func _handle_right_click() -> void:
 		anchor = grid.monolith_pos
 		anchor_size = Vector2i(2, 2)
 	else:
-		# Empty navigable ground — move drafted units
+		# Empty navigable ground — move drafted units to exact click position
 		if grid.grid[grid_pos].navigable:
-			if not drafted.is_empty():
-				var targets := _formation(grid_pos, drafted.size())
-				for i in drafted.size():
-					drafted[i].draft_move_to(targets[i])
+			for u in drafted:
+				u.draft_move_to(get_global_mouse_position())
 		return
 	# Pick unit: selected drafted first, else closest drafted to anchor
 	var best: Unit = null
@@ -590,7 +590,7 @@ func _find_adjacent_to(anchor: Vector2, unit: Unit, size: Vector2i = Vector2i(1,
 			if dx >= 0 and dx < size.x and dy >= 0 and dy < size.y:
 				continue  # skip interior cells
 			var c := anchor + Vector2(dx, dy)
-			if grid.grid.has(c) and grid.grid[c].navigable and not grid.is_cell_reserved(c, unit):
+			if grid.grid.has(c) and grid.grid[c].navigable:
 				var d := ref.distance_to(c)
 				if d < best_dist:
 					best_dist = d

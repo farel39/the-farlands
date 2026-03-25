@@ -14,7 +14,8 @@ var harvest_target: Vector2 = Vector2(-1, -1)
 var build_target: Vector2 = Vector2(-1, -1)
 var gather_target: Vector2 = Vector2(-1, -1)
 var gather_items: Dictionary = {}
-var _dest: Vector2 = Vector2(-1, -1)
+var _dest: Vector2 = Vector2(-1, -1)        # grid coords, used for path visualiser
+var _dest_world: Vector2 = Vector2(-1, -1)  # exact world destination
 
 const GATHER_DURATION := 1.5  # seconds to stand at source before picking up
 var _gather_timer: float = -1.0
@@ -115,7 +116,7 @@ func _draw() -> void:
 
 func _draw_ground_ring(col: Color) -> void:
 	var cx := grid.cell_size * 0.5
-	var cy := grid.cell_size * 0.82
+	var cy := grid.cell_size * 0.88
 	var pulse := sin(Time.get_ticks_msec() * 0.004) * 0.5 + 0.5
 	var rx := grid.cell_size * (0.28 + pulse * 0.04)
 	var ry := grid.cell_size * (0.07 + pulse * 0.01)
@@ -148,14 +149,14 @@ func _draw_corner_brackets(col: Color) -> void:
 
 
 func _draw_path() -> void:
-	if _dest == Vector2(-1, -1):
+	if _dest_world == Vector2(-1, -1):
 		return
 	var col := Color(1, 1, 1, 0.8)
-	var dest_center := to_local(grid.gridToWorld(_dest) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5))
+	var dest_center := _dest_world - global_position
 	var half := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
 	var prev := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85)
 	for i in range(path.size() - 1):
-		var lp := to_local(path[i] + half)
+		var lp := path[i] + half - global_position
 		draw_line(prev, lp, col, 1.5, true)
 		prev = lp
 	draw_line(prev, dest_center, col, 1.5, true)
@@ -228,8 +229,12 @@ func set_walk_frames_down(frames: Array) -> void:
 		_apply_sprite(frames[_walk_idle_frame_down], false)
 
 
+const SEPARATION_RADIUS := 72.0
+const SEPARATION_FORCE := 80.0
+
 func _process(delta: float) -> void:
 	move(delta)
+	_tick_separation(delta)
 	_tick_walk_anim(delta)
 	_tick_gather(delta)
 	_tick_build(delta)
@@ -237,6 +242,18 @@ func _process(delta: float) -> void:
 	_tick_idle_speech(delta)
 	if drafted:
 		queue_redraw()
+
+
+func _tick_separation(delta: float) -> void:
+	var push := Vector2.ZERO
+	for other in grid.get_node("Units").get_children():
+		if other == self or not other is Unit:
+			continue
+		var diff := position - (other as Unit).position
+		var dist := diff.length()
+		if dist < SEPARATION_RADIUS and dist > 0.1:
+			push += diff.normalized() * (1.0 - dist / SEPARATION_RADIUS) * SEPARATION_FORCE
+	position += push * delta
 
 
 func _tick_idle_speech(delta: float) -> void:
@@ -380,9 +397,8 @@ func move(delta: float) -> void:
 		_is_walking_up = false
 		_is_walking_down = false
 		queue_redraw()
-		if _dest != Vector2(-1, -1):
-			grid.release_cell(_dest, self)
-			_dest = Vector2(-1, -1)
+		_dest = Vector2(-1, -1)
+		_dest_world = Vector2(-1, -1)
 		if _arrive_callback.is_valid():
 			var cb := _arrive_callback
 			_arrive_callback = Callable()
@@ -407,10 +423,20 @@ func move(delta: float) -> void:
 		_start_next_task()
 
 
-# Drafted: move immediately, queue preserved but not resumed on arrival.
-func draft_move_to(grid_pos: Vector2) -> void:
+# Drafted: move to an exact world position, routing via grid for obstacle avoidance.
+# world_pos is the intended visual landing point (character feet).
+func draft_move_to(world_pos: Vector2) -> void:
 	harvest_target = Vector2(-1, -1)
+	_dest_world = world_pos
+	# Use the clicked tile for pathfinding (always navigable from the right-click check)
+	var grid_pos := grid.worldToGrid(world_pos)
 	path = _set_dest(grid_pos)
+	# Replace the final grid waypoint with the feet-corrected position within that tile
+	var feet_offset := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85)
+	var actual_pos := world_pos - feet_offset
+	if not path.is_empty():
+		path.resize(path.size() - 1)
+	path.append(actual_pos)
 
 
 # Drafted move with a callback on arrival (for inspection).
@@ -452,9 +478,7 @@ func queue_build(blueprint_pos: Vector2) -> void:
 func set_drafted(value: bool) -> void:
 	drafted = value
 	if not path.is_empty():
-		if _dest != Vector2(-1, -1):
-			grid.release_cell(_dest, self)
-			_dest = Vector2(-1, -1)
+		_dest = Vector2(-1, -1)
 		path = PackedVector2Array([path[0]])
 	# Cancel in-progress timers
 	_gather_timer = -1.0
@@ -520,7 +544,7 @@ func _start_next_task() -> void:
 				return
 			var best_dest: Vector2 = adj[0]
 			for c in adj:
-				if not grid.is_cell_reserved(c, self) and unit_grid.distance_to(c) < unit_grid.distance_to(best_dest):
+				if unit_grid.distance_to(c) < unit_grid.distance_to(best_dest):
 					best_dest = c
 			build_target = task.pos
 			path = _set_dest(best_dest)
@@ -580,7 +604,7 @@ func _closest_adjacent(tree_root: Vector2) -> Vector2:
 			if dx >= 0 and dx <= 2 and dy >= 0 and dy <= 2:
 				continue
 			var neighbor := tree_root + Vector2(dx, dy)
-			if grid.grid.has(neighbor) and grid.grid[neighbor].navigable and not grid.is_cell_reserved(neighbor, self):
+			if grid.grid.has(neighbor) and grid.grid[neighbor].navigable:
 				var d := unit_grid.distance_to(neighbor)
 				if d < best_dist:
 					best_dist = d
@@ -595,7 +619,7 @@ func _closest_adjacent_to_source(source_pos: Vector2) -> Vector2:
 	for dx in range(-2, 7):
 		for dy in range(-2, 7):
 			var c := source_pos + Vector2(dx, dy)
-			if grid.grid.has(c) and grid.grid[c].navigable and not grid.is_cell_reserved(c, self):
+			if grid.grid.has(c) and grid.grid[c].navigable:
 				var d := unit_grid.distance_to(c)
 				if d < best_dist:
 					best_dist = d
@@ -604,11 +628,7 @@ func _closest_adjacent_to_source(source_pos: Vector2) -> Vector2:
 
 
 func _set_dest(grid_pos: Vector2) -> PackedVector2Array:
-	if _dest != Vector2(-1, -1):
-		grid.release_cell(_dest, self)
 	_dest = grid_pos
-	if grid_pos != Vector2(-1, -1):
-		grid.reserve_cell(grid_pos, self)
 	return _build_path(grid_pos)
 
 
