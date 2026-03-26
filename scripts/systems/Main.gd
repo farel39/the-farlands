@@ -218,11 +218,11 @@ func _spawn_units() -> void:
 
 	var unit_scene := preload("res://scenes/Unit.tscn")
 	var units_to_setup: Array = [unit]
-	unit.position = grid.gridToWorld(spawn_positions[0])
+	unit.position = grid.gridToWorld(spawn_positions[0]) + Vector2(grid.cell_size * 0.5, grid.cell_size)
 
 	for i in 2:
 		var u: Unit = unit_scene.instantiate()
-		u.position = grid.gridToWorld(spawn_positions[i + 1])
+		u.position = grid.gridToWorld(spawn_positions[i + 1]) + Vector2(grid.cell_size * 0.5, grid.cell_size)
 		$Grid/Units.add_child(u)
 		units_to_setup.append(u)
 
@@ -314,6 +314,13 @@ func _spawn_units() -> void:
 
 	gui.register_units(all_units)
 
+	# Centre camera on the unit group at startup
+	var centroid := Vector2.ZERO
+	for u in all_units:
+		centroid += u.position + Vector2(0, -grid.cell_size * 0.5)
+	centroid /= all_units.size()
+	$Camera2D.center_on(centroid)
+
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -367,7 +374,7 @@ func _handle_click() -> void:
 	# Clicked on a unit?
 	var click_world := get_global_mouse_position()
 	for u in all_units:
-		var unit_center: Vector2 = u.position + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+		var unit_center: Vector2 = u.position + Vector2(0, -grid.cell_size * 0.5)
 		if click_world.distance_to(unit_center) < grid.cell_size * 0.55:
 			_set_selection([u])
 			gui.show_unit_panel(u, mouse_screen)
@@ -701,12 +708,11 @@ class _NavOverlay extends Node2D:
 	func _init(g: Grid) -> void:
 		_grid = g
 	func _draw() -> void:
-		var cs := float(_grid.cell_size)
-		for cell in _grid.grid:
-			var data = _grid.grid[cell]
-			var col := Color(0, 1, 0, 0.25) if data.navigable else Color(1, 0, 0, 0.35)
-			var tl := _grid.gridToWorld(cell)
-			draw_rect(Rect2(tl, Vector2(cs, cs)), col)
+		var ns := float(Grid.NAV_CELL_SIZE)
+		for nc in _grid.nav_grid:
+			if _grid.nav_grid[nc]:
+				continue  # skip navigable cells — only draw blocked ones
+			draw_rect(Rect2(_grid.navToWorld(nc), Vector2(ns, ns)), Color(1, 0, 0, 0.35))
 	func _process(_delta: float) -> void:
 		if visible:
 			queue_redraw()

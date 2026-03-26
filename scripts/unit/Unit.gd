@@ -96,12 +96,13 @@ func _apply_sprite(tex: Texture2D, flip_h: bool) -> void:
 	var s := float(grid.cell_size) / float(tex.get_height())
 	sprite.scale = Vector2(s, s)
 	var scaled_w := s * tex.get_width()
-	sprite.position = Vector2((grid.cell_size - scaled_w) * 0.5, 0.0)
+	# origin is bottom-centre (feet); sprite top-left is (-w/2, -cell_size)
+	sprite.position = Vector2(-scaled_w * 0.5, -grid.cell_size)
 	if _shadow:
 		_shadow.texture = tex
 		_shadow.flip_h = flip_h
 		_shadow.scale = Vector2(s * 1.1, s * 0.18)
-		_shadow.position = Vector2(sprite.position.x - scaled_w * 0.05 + 2, grid.cell_size * 0.74)
+		_shadow.position = Vector2(-scaled_w * 0.55 + 2, -grid.cell_size * 0.18)
 
 func _draw() -> void:
 	if drafted:
@@ -115,8 +116,8 @@ func _draw() -> void:
 
 
 func _draw_ground_ring(col: Color) -> void:
-	var cx := grid.cell_size * 0.5
-	var cy := grid.cell_size * 0.94
+	var cx := 0.0
+	var cy := -grid.cell_size * 0.06
 	var pulse := sin(Time.get_ticks_msec() * 0.004) * 0.5 + 0.5
 	var rx := grid.cell_size * (0.28 + pulse * 0.04)
 	var ry := grid.cell_size * (0.07 + pulse * 0.01)
@@ -136,8 +137,9 @@ func _draw_corner_brackets(col: Color) -> void:
 	var m := 6.0
 	var ln := grid.cell_size * 0.18
 	var w := 2.5
-	var x0 := m;  var y0 := m
-	var x1 := grid.cell_size - m;  var y1 := grid.cell_size - m
+	var half := grid.cell_size * 0.5
+	var x0 := -half + m;             var y0 := -float(grid.cell_size) + m
+	var x1 :=  half - m;             var y1 := -m
 	draw_line(Vector2(x0, y0), Vector2(x0 + ln, y0), col, w, true)
 	draw_line(Vector2(x0, y0), Vector2(x0, y0 + ln), col, w, true)
 	draw_line(Vector2(x1, y0), Vector2(x1 - ln, y0), col, w, true)
@@ -153,10 +155,9 @@ func _draw_path() -> void:
 		return
 	var col := Color(1, 1, 1, 0.8)
 	var dest_center := _dest_world - global_position
-	var half := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
-	var prev := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85)
+	var prev := Vector2.ZERO  # origin is feet
 	for i in range(path.size() - 1):
-		var lp := path[i] + half - global_position
+		var lp := path[i] - global_position
 		draw_line(prev, lp, col, 1.5, true)
 		prev = lp
 	draw_line(prev, dest_center, col, 1.5, true)
@@ -173,14 +174,14 @@ func _draw_speech_bubble() -> void:
 	var text_size := font.get_multiline_string_size(_bubble_text, HORIZONTAL_ALIGNMENT_LEFT, max_w, font_size, 4)
 	var bw := text_size.x + pad.x * 2
 	var bh := text_size.y + pad.y * 2
-	var bx := grid.cell_size * 0.5 - bw * 0.5
-	var by := -bh - tail_h - grid.cell_size * 0.05
+	var bx := -bw * 0.5
+	var by := -float(grid.cell_size) - bh - tail_h - grid.cell_size * 0.05
 	var alpha: float = clamp(_bubble_timer / BUBBLE_FADE_TIME, 0.0, 1.0)
 	# Background
 	draw_rect(Rect2(bx, by, bw, bh), Color(0.98, 0.96, 0.90, 0.95 * alpha), true)
 	draw_rect(Rect2(bx, by, bw, bh), Color(0.3, 0.25, 0.2, alpha), false, 2.0)
 	# Tail
-	var cx := grid.cell_size * 0.5
+	var cx := 0.0
 	var tail_pts := PackedVector2Array([
 		Vector2(cx - tail_h * 0.6, by + bh),
 		Vector2(cx + tail_h * 0.6, by + bh),
@@ -241,7 +242,7 @@ func _process(delta: float) -> void:
 	_tick_bubble(delta)
 	_tick_idle_speech(delta)
 	# Y-sort: units lower on screen (higher Y) render in front of rocks/objects
-	z_index = int((position.y + grid.cell_size * 0.85) / grid.cell_size)
+	z_index = int(position.y / grid.cell_size)
 	if drafted:
 		queue_redraw()
 
@@ -382,7 +383,6 @@ func move(delta: float) -> void:
 			position += to_next.normalized() * remaining
 			remaining = 0.0
 	if path.is_empty():
-		# Show idle pose when stopping
 		if _is_walking_side:
 			if _walk_frames_side.size() > _walk_idle_frame_side:
 				_apply_sprite(_walk_frames_side[_walk_idle_frame_side], _walk_flip_h)
@@ -406,14 +406,12 @@ func move(delta: float) -> void:
 			_arrive_callback = Callable()
 			cb.call()
 		if gather_target != Vector2(-1, -1):
-			# Start gather delay — _tick_gather handles completion
 			_gather_timer = GATHER_DURATION
 			return
 		if harvest_target != Vector2(-1, -1):
 			grid.harvest_tree(harvest_target)
 			harvest_target = Vector2(-1, -1)
 		if build_target != Vector2(-1, -1):
-			# Compute build duration from cost total, start progress bar
 			var cost_total := 0
 			if grid.blueprints.has(build_target):
 				for v in grid.blueprints[build_target].def.cost.values():
@@ -424,44 +422,47 @@ func move(delta: float) -> void:
 			return
 		_start_next_task()
 
-
 # Drafted: move to an exact world position, routing via grid for obstacle avoidance.
 # world_pos is the intended visual landing point (character feet).
 func draft_move_to(world_pos: Vector2) -> void:
 	harvest_target = Vector2(-1, -1)
 	_dest_world = world_pos
-	# Use the clicked tile for pathfinding; fall back to nearest navigable tile if needed
-	var grid_pos := grid.worldToGrid(world_pos)
-	if not grid.grid.has(grid_pos) or not grid.grid[grid_pos].navigable:
-		# Find nearest navigable tile within 3 cells
+	var nav_pos := grid.worldToNav(world_pos)
+	if not grid.nav_grid.has(nav_pos) or not grid.nav_grid[nav_pos]:
 		var best := Vector2(-1, -1)
 		var best_d := INF
-		for dx in range(-3, 4):
-			for dy in range(-3, 4):
-				var c := grid_pos + Vector2(dx, dy)
-				if grid.grid.has(c) and grid.grid[c].navigable:
-					var d := Vector2(dx, dy).length()
+		for dx in range(-6, 7):
+			for dy in range(-6, 7):
+				var nc := nav_pos + Vector2(dx, dy)
+				if grid.nav_grid.has(nc) and grid.nav_grid[nc]:
+					var nc_center := grid.navToWorld(nc) + Vector2(Grid.NAV_CELL_SIZE * 0.5, Grid.NAV_CELL_SIZE * 0.5)
+					var d := world_pos.distance_to(nc_center)
 					if d < best_d:
 						best_d = d
-						best = c
+						best = nc
 		if best == Vector2(-1, -1):
 			return
-		grid_pos = best
-		world_pos = grid.gridToWorld(grid_pos) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+		nav_pos = best
+		# Clamp to nearest point inside the walkable tile rather than snapping to its center
+		var tile_tl := grid.navToWorld(nav_pos)
+		world_pos = Vector2(
+			clamp(world_pos.x, tile_tl.x, tile_tl.x + Grid.NAV_CELL_SIZE),
+			clamp(world_pos.y, tile_tl.y, tile_tl.y + Grid.NAV_CELL_SIZE)
+		)
 		_dest_world = world_pos
+	var grid_pos := grid.worldToGrid(world_pos)
 	path = _set_dest(grid_pos)
-	var feet_offset := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85)
-	var actual_pos := world_pos - feet_offset
+	# position IS feet — no offset needed
 	if not path.is_empty():
 		path.resize(path.size() - 1)
-	path.append(actual_pos)
+	path.append(world_pos)
 
 
 # Drafted move with a callback on arrival (for inspection).
 func draft_inspect_to(grid_pos: Vector2, callback: Callable) -> void:
 	_arrive_callback = callback
 	harvest_target = Vector2(-1, -1)
-	_dest_world = grid.gridToWorld(grid_pos) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+	_dest_world = grid.gridToWorld(grid_pos) + Vector2(grid.cell_size * 0.5, grid.cell_size)
 	path = _set_dest(grid_pos)
 
 
@@ -520,7 +521,7 @@ func _start_next_task() -> void:
 	if task_queue.is_empty():
 		became_idle.emit()
 		return
-	var unit_grid := grid.worldToGrid(position)
+	var unit_grid := get_grid_pos()
 
 	var has_gather := false
 	for t in task_queue:
@@ -618,7 +619,7 @@ func _count_at_source(source_pos: Vector2, item: String) -> int:
 func _closest_adjacent(tree_root: Vector2) -> Vector2:
 	var best := Vector2(-1, -1)
 	var best_dist := INF
-	var unit_grid := grid.worldToGrid(position)
+	var unit_grid := get_grid_pos()
 	for dx in range(-1, 4):
 		for dy in range(-1, 4):
 			if dx >= 0 and dx <= 2 and dy >= 0 and dy <= 2:
@@ -635,7 +636,7 @@ func _closest_adjacent(tree_root: Vector2) -> Vector2:
 func _closest_adjacent_to_source(source_pos: Vector2) -> Vector2:
 	var best := Vector2(-1, -1)
 	var best_dist := INF
-	var unit_grid := grid.worldToGrid(position)
+	var unit_grid := get_grid_pos()
 	for dx in range(-2, 7):
 		for dy in range(-2, 7):
 			var c := source_pos + Vector2(dx, dy)
@@ -653,17 +654,24 @@ func _set_dest(grid_pos: Vector2) -> PackedVector2Array:
 
 
 func _build_path(grid_pos: Vector2) -> PackedVector2Array:
-	var from := pf.getIDGridPos(pf.getWorldID(position))
-	var grid_path := pf.getPath(from, grid_pos)
+	# position is feet (bottom-centre); shift up to get tile centre for A*
+	var char_center := position + Vector2(0.0, -grid.cell_size * 0.5)
+	var from_nav := grid.worldToNav(char_center)
+	var dest_center := grid.gridToWorld(grid_pos) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+	var to_nav := grid.worldToNav(dest_center)
+	var nav_path := pf.getPath(from_nav, to_nav)
 	var world_path := PackedVector2Array()
-	world_path.append(position)
-	for p in grid_path:
-		world_path.append(grid.gridToWorld(p))
+	world_path.append(char_center)
+	for p in nav_path:
+		world_path.append(grid.navToWorld(p) + Vector2(Grid.NAV_CELL_SIZE * 0.5, Grid.NAV_CELL_SIZE * 0.5))
 	world_path = pf.smoothPath(world_path)
-	world_path = pf.tightenPath(world_path)
 	if not world_path.is_empty():
 		world_path.remove_at(0)
-	return world_path
+	# Convert tile centres to feet positions (add half cell_size downward)
+	var feet_path := PackedVector2Array()
+	for wp in world_path:
+		feet_path.append(wp + Vector2(0.0, grid.cell_size * 0.5))
+	return feet_path
 
 
 func is_busy() -> bool:
@@ -676,4 +684,4 @@ func is_busy() -> bool:
 
 
 func get_grid_pos() -> Vector2:
-	return grid.worldToGrid(position)
+	return grid.worldToGrid(position + Vector2(-grid.cell_size * 0.5, -grid.cell_size))

@@ -9,13 +9,16 @@ const DIRECTIONS = [
 	Vector2(-1, -1), Vector2(1, -1), Vector2(-1, 1), Vector2(1, 1)
 ]
 
-# Internal: includes disabled points, used for graph operations on specific cells.
-func _pid(gridPoint: Vector2) -> int:
-	return aStar.get_closest_point(grid.gridToWorld(gridPoint), true)
+# Height of the nav grid in cells — set during initialize(), used for O(1) ID lookup.
+var _nav_h: int = 0
 
-# Public: excludes disabled (wall) points, used for navigation queries.
-func getPointID(gridPoint: Vector2) -> int:
-	return aStar.get_closest_point(grid.gridToWorld(gridPoint))
+# O(1): compute A* point ID directly from nav coordinates.
+# Matches addPoints() insertion order: outer loop x, inner loop y.
+func _pid(navPoint: Vector2) -> int:
+	return int(navPoint.x) * _nav_h + int(navPoint.y)
+
+func getPointID(navPoint: Vector2) -> int:
+	return aStar.get_closest_point(grid.navToWorld(navPoint))
 
 func getWorldID(worldPoint: Vector2) -> int:
 	return aStar.get_closest_point(worldPoint)
@@ -23,29 +26,30 @@ func getWorldID(worldPoint: Vector2) -> int:
 func getIDWorldPos(_id: int) -> Vector2:
 	return aStar.get_point_position(_id)
 
-func getIDGridPos(_id: int) -> Vector2:
-	return grid.worldToGrid(getIDWorldPos(_id))
+func getIDNavPos(_id: int) -> Vector2:
+	return grid.worldToNav(getIDWorldPos(_id))
 
 func addPoints():
 	var curID = 0
-	for point in grid.grid:
-		aStar.add_point(curID, grid.gridToWorld(point))
+	for point in grid.nav_grid:
+		aStar.add_point(curID, grid.navToWorld(point))
 		curID += 1
 
 func connectPoint(_point: Vector2):
-	if not grid.grid[_point].navigable:
+	if not grid.nav_grid[_point]:
 		return
 	var _pointID = _pid(_point)
 	for direction in DIRECTIONS:
 		var neighbor = _point + direction
-		if not grid.grid.has(neighbor) or not grid.grid[neighbor].navigable:
+		if not grid.nav_grid.has(neighbor) or not grid.nav_grid[neighbor]:
 			continue
-		# Diagonal moves must not cut through a walled corner
 		if direction.x != 0 and direction.y != 0:
 			var c1 = _point + Vector2(direction.x, 0)
 			var c2 = _point + Vector2(0, direction.y)
-			if (grid.grid.has(c1) and not grid.grid[c1].navigable) or \
-			   (grid.grid.has(c2) and not grid.grid[c2].navigable):
+			# Only block diagonal if BOTH corners are blocked (truly impassable corner).
+			# A single blocked corner is a grazeable edge — allow it.
+			if (grid.nav_grid.has(c1) and not grid.nav_grid[c1]) and \
+			   (grid.nav_grid.has(c2) and not grid.nav_grid[c2]):
 				continue
 		aStar.connect_points(_pointID, _pid(neighbor))
 
@@ -53,25 +57,25 @@ func disconnectPoint(_point: Vector2):
 	var _pointID = _pid(_point)
 	for direction in DIRECTIONS:
 		var neighbor = _point + direction
-		if grid.grid.has(neighbor):
+		if grid.nav_grid.has(neighbor):
 			aStar.disconnect_points(_pointID, _pid(neighbor))
 
 func connectAllPoints():
-	for point in grid.grid:
+	for point in grid.nav_grid:
 		connectPoint(point)
 
 func initialize():
+	_nav_h = grid.height * grid.cell_size / Grid.NAV_CELL_SIZE
 	addPoints()
 	connectAllPoints()
-	for point in grid.grid:
-		if not grid.grid[point].navigable:
+	for point in grid.nav_grid:
+		if not grid.nav_grid[point]:
 			aStar.set_point_disabled(_pid(point), true)
-	for point in grid.grid:
-		grid.grid[point].navChanged.connect(_on_nav_changed)
+	grid.nav_cell_changed.connect(_on_nav_changed)
 
 func _on_nav_changed(pos: Vector2) -> void:
 	var pid := _pid(pos)
-	if grid.grid[pos].navigable:
+	if grid.nav_grid[pos]:
 		aStar.set_point_disabled(pid, false)
 		connectPoint(pos)
 	else:
@@ -89,26 +93,32 @@ func _refresh_corner_diagonals(pos: Vector2) -> void:
 	for pair in pairs:
 		var a: Vector2 = pair[0]
 		var b: Vector2 = pair[1]
-		if not (grid.grid.has(a) and grid.grid.has(b)):
+		if not (grid.nav_grid.has(a) and grid.nav_grid.has(b)):
+			continue
+		if not (grid.nav_grid[a] and grid.nav_grid[b]):
 			continue
 		var aID := _pid(a)
 		var bID := _pid(b)
-		var all_clear: bool = grid.grid[a].navigable and grid.grid[b].navigable and grid.grid[pos].navigable
-		if all_clear:
-			aStar.connect_points(aID, bID)
-		else:
+		# The other intermediate corner (the one that isn't pos)
+		var c1 := a + Vector2(sign(b.x - a.x), 0)
+		var c2 := a + Vector2(0, sign(b.y - a.y))
+		var other: Vector2 = c2 if c1 == pos else c1
+		var pos_blocked: bool = grid.nav_grid.has(pos) and not grid.nav_grid[pos]
+		var other_blocked: bool = grid.nav_grid.has(other) and not grid.nav_grid[other]
+		if pos_blocked and other_blocked:
 			aStar.disconnect_points(aID, bID)
+		else:
+			aStar.connect_points(aID, bID)
 
 func getPath(_pointA: Vector2, _pointB: Vector2) -> PackedVector2Array:
 	var aID = getPointID(_pointA)
 	var bID = getPointID(_pointB)
 	var worldPath = aStar.get_point_path(aID, bID)
-	var gridPath: PackedVector2Array = []
+	var navPath: PackedVector2Array = []
 	for point in worldPath:
-		gridPath.append(grid.worldToGrid(point))
-	return gridPath
+		navPath.append(grid.worldToNav(point))
+	return navPath
 
-# Removes redundant waypoints by checking direct line-of-sight between points.
 func smoothPath(world_path: PackedVector2Array) -> PackedVector2Array:
 	if world_path.size() <= 2:
 		return world_path
@@ -127,13 +137,12 @@ func smoothPath(world_path: PackedVector2Array) -> PackedVector2Array:
 
 	return result
 
-# Pulls each intermediate waypoint toward the nearest obstacle corner it routes around,
-# minimising total path length while keeping line-of-sight from both neighbours.
 func tightenPath(world_path: PackedVector2Array) -> PackedVector2Array:
 	if world_path.size() <= 2:
 		return world_path
 	const CLEARANCE := 5.0
-	var half := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+	var ns := float(Grid.NAV_CELL_SIZE)
+	var half := Vector2(ns * 0.5, ns * 0.5)
 	var result := PackedVector2Array()
 	result.append(world_path[0])
 	for i in range(1, world_path.size() - 1):
@@ -142,26 +151,24 @@ func tightenPath(world_path: PackedVector2Array) -> PackedVector2Array:
 		var nxt     := world_path[i + 1]
 		var best    := curr
 		var best_len := INF
-		var curr_grid := grid.worldToGrid(curr + half)
+		var curr_nav := grid.worldToNav(curr)
 		for dx in range(-1, 2):
 			for dy in range(-1, 2):
 				if dx == 0 and dy == 0:
 					continue
-				var nb := curr_grid + Vector2(dx, dy)
-				if not grid.grid.has(nb) or grid.grid[nb].navigable:
+				var nb := curr_nav + Vector2(dx, dy)
+				if not grid.nav_grid.has(nb) or grid.nav_grid[nb]:
 					continue
-				var tile_tl    := grid.gridToWorld(nb)
+				var tile_tl    := grid.navToWorld(nb)
 				var tile_center := tile_tl + half
-				# Try all 4 corners of this obstacle tile
 				var corners := [
 					tile_tl,
-					tile_tl + Vector2(grid.cell_size, 0),
-					tile_tl + Vector2(0, grid.cell_size),
-					tile_tl + Vector2(grid.cell_size, grid.cell_size),
+					tile_tl + Vector2(ns, 0),
+					tile_tl + Vector2(0, ns),
+					tile_tl + Vector2(ns, ns),
 				]
 				for corner: Vector2 in corners:
 					var push := (corner - tile_center).normalized()
-					# candidate stores as tile-top-left equivalent so +half = unit centre
 					var candidate := (corner + push * CLEARANCE) - half
 					if not (_hasLOS(prev, candidate) and _hasLOS(candidate, nxt)):
 						continue
@@ -175,16 +182,35 @@ func tightenPath(world_path: PackedVector2Array) -> PackedVector2Array:
 
 
 func _hasLOS(a: Vector2, b: Vector2) -> bool:
-	var half := Vector2(grid.cell_size, grid.cell_size) * 0.5
-	var a_grid = grid.worldToGrid(a + half)
-	var b_grid = grid.worldToGrid(b + half)
-	var cells = _supercover(a_grid, b_grid)
-	for cell in cells:
-		if grid.grid.has(cell) and not grid.grid[cell].navigable:
+	var a_nav := grid.worldToNav(a)
+	var b_nav := grid.worldToNav(b)
+	var x: int = int(a_nav.x);  var y: int = int(a_nav.y)
+	var x1: int = int(b_nav.x); var y1: int = int(b_nav.y)
+	var dx: int = x1 - x;       var dy: int = y1 - y
+	var nx: int = abs(dx);       var ny: int = abs(dy)
+	var sx: int = 1 if dx > 0 else -1
+	var sy: int = 1 if dy > 0 else -1
+	var ix: int = 0;             var iy: int = 0
+	while ix < nx or iy < ny:
+		var t1: int = (1 + 2 * ix) * ny
+		var t2: int = (1 + 2 * iy) * nx
+		if t1 == t2:
+			# Line grazes the corner between two cells.
+			# Only impassable when BOTH cells are blocked.
+			var c1 := Vector2(x + sx, y)
+			var c2 := Vector2(x, y + sy)
+			if (grid.nav_grid.has(c1) and not grid.nav_grid[c1]) and \
+			   (grid.nav_grid.has(c2) and not grid.nav_grid[c2]):
+				return false
+			x += sx;  y += sy;  ix += 1;  iy += 1
+		elif t1 < t2:
+			x += sx;  ix += 1
+		else:
+			y += sy;  iy += 1
+		if grid.nav_grid.has(Vector2(x, y)) and not grid.nav_grid[Vector2(x, y)]:
 			return false
 	return true
 
-# Supercover DDA: visits every cell the line passes through.
 func _supercover(from: Vector2, to: Vector2) -> Array:
 	var cells: Array = []
 	var x: int = int(from.x)

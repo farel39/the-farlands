@@ -21,6 +21,16 @@ var monolith_pos: Vector2 = Vector2(-1, -1)
 var ship_inventory: Dictionary = {}
 var crate_inventories: Dictionary = {}
 
+const NAV_CELL_SIZE: int = 128
+var nav_grid: Dictionary = {}  # Vector2 nav_pos → bool (navigable)
+signal nav_cell_changed(nav_pos: Vector2)
+
+func navToWorld(_pos: Vector2) -> Vector2:
+	return _pos * NAV_CELL_SIZE
+
+func worldToNav(_pos: Vector2) -> Vector2:
+	return floor(_pos / NAV_CELL_SIZE)
+
 const _WATER_TILE_SCENE = preload("res://scenes/WaterTile.tscn")
 
 var placement_mode: bool = false
@@ -56,7 +66,24 @@ func generateGrid():
 		for y in height:
 			grid[Vector2(x,y)] = CellData.new(Vector2(x, y))
 			grid[Vector2(x,y)].floorData = preload("res://data/floors/sand.tres")
+			grid[Vector2(x,y)].navChanged.connect(_on_tile_nav_changed)
 			refreshTile(Vector2(x,y))
+	var ratio := cell_size / NAV_CELL_SIZE
+	for x in width * ratio:
+		for y in height * ratio:
+			nav_grid[Vector2(x, y)] = true
+
+
+func _on_tile_nav_changed(tile_pos: Vector2) -> void:
+	var ratio := cell_size / NAV_CELL_SIZE
+	var nav_origin := worldToNav(gridToWorld(tile_pos))
+	var nav: bool = grid[tile_pos].navigable
+	for dnx in ratio:
+		for dny in ratio:
+			var nc := nav_origin + Vector2(dnx, dny)
+			if nav_grid.has(nc) and nav_grid[nc] != nav:
+				nav_grid[nc] = nav
+				nav_cell_changed.emit(nc)
 
 
 func toggle_debug() -> void:

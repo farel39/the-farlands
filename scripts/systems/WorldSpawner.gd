@@ -444,23 +444,16 @@ static func spawn_crash_site(g: Grid) -> void:
 		var b := half * 0.50
 		var tilt := -PI / 4.0
 
-		# Manually specified blocked tiles (dx, dy) relative to ship_pos top-left.
-		# Grid layout (4x4), y increases downward:
-		#   (0,0) (1,0) (2,0) (3,0)
-		#   (0,1) (1,1) (2,1) (3,1)
-		#   (0,2) (1,2) (2,2) (3,2)
-		#   (0,3) (1,3) (2,3) (3,3)
-		var blocked_offsets := [
-			Vector2(1, 0), Vector2(2, 0),
-			Vector2(0, 1), Vector2(1, 1), Vector2(2, 1), Vector2(3, 1),
-			Vector2(0, 2), Vector2(1, 2), Vector2(2, 2), Vector2(3, 2),
-			Vector2(1, 3), Vector2(2, 3),
-		]
-		for offset in blocked_offsets:
-			var c: Vector2 = ship_pos + offset
-			if g.grid.has(c):
+		# Corners of the 4x4 footprint are walkable; everything else is blocked.
+		var ship_corners := [Vector2(0,0), Vector2(3,0), Vector2(0,3), Vector2(3,3)]
+		for dx in SHIP_TILES:
+			for dy in SHIP_TILES:
+				var c := ship_pos + Vector2(dx, dy)
+				if not g.grid.has(c):
+					continue
 				g.grid[c].occupier = "CrashedShip"
-				g.grid[c].navigable = false
+				if not ship_corners.has(Vector2(dx, dy)):
+					g.grid[c].navigable = false
 
 		var s_scale := float(SHIP_TILES * g.cell_size) / float(ship_tex.get_width())
 
@@ -550,13 +543,14 @@ static func spawn_crash_site(g: Grid) -> void:
 				var hull_body := StaticBody2D.new()
 				hull_body.position = hp_world
 				var hull_origin := Vector2(hull_img.get_width() * 0.5, hull_img.get_height() * 0.5)
+				# Merge all polygon points and take convex hull — avoids convex decomposition failures
+				var all_pts := PackedVector2Array()
 				for poly: PackedVector2Array in hull_polys:
-					var hcp := CollisionPolygon2D.new()
-					var scaled := PackedVector2Array()
 					for pt: Vector2 in poly:
-						scaled.append((pt - hull_origin) * h_scale)
-					hcp.polygon = scaled
-					hull_body.add_child(hcp)
+						all_pts.append((pt - hull_origin) * h_scale)
+				var hcp := CollisionPolygon2D.new()
+				hcp.polygon = Geometry2D.convex_hull(all_pts)
+				hull_body.add_child(hcp)
 				hull_body.set_meta("occupier", "HullFragment")
 				g.add_child(hull_body)
 
