@@ -11,6 +11,7 @@ var selected_units: Array = []
 var pending_tasks: Array = []
 
 var _inspect_popup: Panel = null
+var _inspect_btn: Button = null
 var _inspect_pending: Callable
 
 const DAY_DURATION := 120.0  # seconds per full day
@@ -531,39 +532,58 @@ func _on_unit_idle(u: Unit) -> void:
 
 
 func _handle_right_click() -> void:
-	var grid_pos := grid.worldToGrid(get_global_mouse_position())
+	var mouse_world := get_global_mouse_position()
+	var drafted := all_units.filter(func(u): return u.drafted)
+
+	# Physics query — detection follows collision shapes exactly
+	var pq := PhysicsPointQueryParameters2D.new()
+	pq.position = mouse_world
+	pq.collide_with_bodies = true
+	pq.collide_with_areas = false
+	var hits := get_world_2d().direct_space_state.intersect_point(pq)
+	for hit in hits:
+		var body = hit.collider
+		if not body.has_meta("occupier"):
+			continue
+		var occ: String = body.get_meta("occupier")
+		match occ:
+			"Rock", "TidePoolRock":
+				if drafted.is_empty(): return
+				var rock_grid: Vector2 = body.get_meta("grid_pos")
+				var best := _best_unit(drafted, rock_grid)
+				var dest := _find_adjacent_to(rock_grid, best)
+				if dest == Vector2(-1, -1): return
+				var u_ref := best
+				_inspect_pending = func():
+					u_ref.draft_move_to(grid.gridToWorld(dest) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85))
+				_inspect_btn.text = "Mine"
+				_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
+				_inspect_popup.visible = true
+				return
+			"CrashedShip", "HullFragment":
+				if drafted.is_empty(): return
+				_show_inspect_popup(drafted, grid.crash_site_pos, Vector2i(4, 4), "ship")
+				return
+			"SupplyCrate":
+				if drafted.is_empty(): return
+				_show_inspect_popup(drafted, body.get_meta("grid_pos"), Vector2i(1, 1), "crate")
+				return
+			"Monolith":
+				if drafted.is_empty(): return
+				_show_inspect_popup(drafted, grid.monolith_pos, Vector2i(2, 2), "monolith")
+				return
+
+	# No physics hit — move drafted units to navigable ground
+	var grid_pos := grid.worldToGrid(mouse_world)
 	if not grid.grid.has(grid_pos):
 		return
-	var drafted := all_units.filter(func(u): return u.drafted)
-	var occupier: String = grid.grid[grid_pos].occupier if grid.grid[grid_pos].occupier != null else ""
-	var inspect_key: String = ""
-	var anchor: Vector2 = grid_pos
-	var anchor_size := Vector2i(1, 1)
-	if occupier == "Rock" or occupier == "TidePoolRock":
-		# Move each drafted unit to the navigable cell adjacent to the rock nearest to them
-		for u in drafted:
-			var dest := _find_adjacent_to(grid_pos, u, Vector2i(1, 1))
-			if dest != Vector2(-1, -1):
-				u.draft_move_to(grid.gridToWorld(dest) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85))
-		return
-	elif occupier == "CrashedShip" or occupier == "HullFragment":
-		inspect_key = "ship"
-		anchor = grid.crash_site_pos
-		anchor_size = Vector2i(4, 4)
-	elif occupier == "SupplyCrate":
-		inspect_key = "crate"
-	elif occupier == "Monolith":
-		inspect_key = "monolith"
-		anchor = grid.monolith_pos
-		anchor_size = Vector2i(2, 2)
-	else:
-		# Empty navigable ground — move drafted units, spread around click point
-		if grid.grid[grid_pos].navigable:
-			var targets := _world_formation(get_global_mouse_position(), drafted.size())
-			for i in drafted.size():
-				drafted[i].draft_move_to(targets[i])
-		return
-	# Pick unit: selected drafted first, else closest drafted to anchor
+	if grid.grid[grid_pos].navigable:
+		var targets := _world_formation(mouse_world, drafted.size())
+		for i in drafted.size():
+			drafted[i].draft_move_to(targets[i])
+
+
+func _best_unit(drafted: Array, anchor: Vector2) -> Unit:
 	var best: Unit = null
 	for u in selected_units:
 		if u.drafted:
@@ -574,6 +594,11 @@ func _handle_right_click() -> void:
 		for u in drafted:
 			if u.get_grid_pos().distance_to(anchor) < best.get_grid_pos().distance_to(anchor):
 				best = u
+	return best
+
+
+func _show_inspect_popup(drafted: Array, anchor: Vector2, anchor_size: Vector2i, inspect_key: String) -> void:
+	var best := _best_unit(drafted, anchor)
 	var dest := _find_adjacent_to(anchor, best, anchor_size)
 	if dest == Vector2(-1, -1):
 		return
@@ -586,6 +611,7 @@ func _handle_right_click() -> void:
 				if not lines.is_empty():
 					u_ref.show_speech(lines[randi() % lines.size()])
 		)
+	_inspect_btn.text = "Inspect"
 	_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
 	_inspect_popup.visible = true
 
@@ -604,7 +630,86 @@ func _setup_inspect_popup() -> void:
 			_inspect_pending = Callable()
 	)
 	_inspect_popup.add_child(btn)
+	_inspect_btn = btn
 	$CanvasLayer.add_child(_inspect_popup)
+	_setup_debug_button()
+
+
+func _setup_debug_button() -> void:
+	var overlay := _CollisionOverlay.new(grid)
+	overlay.z_index = 100
+	grid.add_child(overlay)
+
+	var btn := Button.new()
+	btn.text = "Show Collision"
+	btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	btn.offset_left = -160
+	btn.offset_right = -8
+	btn.offset_top = 8
+	btn.offset_bottom = 40
+	btn.pressed.connect(func():
+		overlay.visible = not overlay.visible
+		btn.text = "Hide Collision" if overlay.visible else "Show Collision"
+	)
+	overlay.visible = false
+	$CanvasLayer.add_child(btn)
+
+	var nav_overlay := _NavOverlay.new(grid)
+	nav_overlay.z_index = 99
+	grid.add_child(nav_overlay)
+
+	var nav_btn := Button.new()
+	nav_btn.text = "Show Navigable"
+	nav_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	nav_btn.offset_left = -160
+	nav_btn.offset_right = -8
+	nav_btn.offset_top = 48
+	nav_btn.offset_bottom = 80
+	nav_btn.pressed.connect(func():
+		nav_overlay.visible = not nav_overlay.visible
+		nav_btn.text = "Hide Navigable" if nav_overlay.visible else "Show Navigable"
+	)
+	nav_overlay.visible = false
+	$CanvasLayer.add_child(nav_btn)
+
+
+class _CollisionOverlay extends Node2D:
+	var _grid: Grid
+	func _init(g: Grid) -> void:
+		_grid = g
+	func _draw() -> void:
+		for child in _grid.get_children():
+			if not child is StaticBody2D:
+				continue
+			for shape in child.get_children():
+				if not shape is CollisionPolygon2D:
+					continue
+				var poly: PackedVector2Array = (shape as CollisionPolygon2D).polygon
+				if poly.is_empty():
+					continue
+				var world_poly := PackedVector2Array()
+				for pt in poly:
+					world_poly.append((child as StaticBody2D).position + pt)
+				draw_polyline(world_poly + PackedVector2Array([world_poly[0]]), Color(0, 1, 0, 0.9), 2.0, true)
+	func _process(_delta: float) -> void:
+		if visible:
+			queue_redraw()
+
+
+class _NavOverlay extends Node2D:
+	var _grid: Grid
+	func _init(g: Grid) -> void:
+		_grid = g
+	func _draw() -> void:
+		var cs := float(_grid.cell_size)
+		for cell in _grid.grid:
+			var data = _grid.grid[cell]
+			var col := Color(0, 1, 0, 0.25) if data.navigable else Color(1, 0, 0, 0.35)
+			var tl := _grid.gridToWorld(cell)
+			draw_rect(Rect2(tl, Vector2(cs, cs)), col)
+	func _process(_delta: float) -> void:
+		if visible:
+			queue_redraw()
 
 
 func _find_adjacent_to(anchor: Vector2, unit: Unit, size: Vector2i = Vector2i(1, 1)) -> Vector2:

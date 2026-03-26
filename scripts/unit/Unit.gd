@@ -116,7 +116,7 @@ func _draw() -> void:
 
 func _draw_ground_ring(col: Color) -> void:
 	var cx := grid.cell_size * 0.5
-	var cy := grid.cell_size * 0.88
+	var cy := grid.cell_size * 0.94
 	var pulse := sin(Time.get_ticks_msec() * 0.004) * 0.5 + 0.5
 	var rx := grid.cell_size * (0.28 + pulse * 0.04)
 	var ry := grid.cell_size * (0.07 + pulse * 0.01)
@@ -450,7 +450,6 @@ func draft_move_to(world_pos: Vector2) -> void:
 		world_pos = grid.gridToWorld(grid_pos) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
 		_dest_world = world_pos
 	path = _set_dest(grid_pos)
-	# Replace the final grid waypoint with the feet-corrected position within that tile
 	var feet_offset := Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85)
 	var actual_pos := world_pos - feet_offset
 	if not path.is_empty():
@@ -462,6 +461,7 @@ func draft_move_to(world_pos: Vector2) -> void:
 func draft_inspect_to(grid_pos: Vector2, callback: Callable) -> void:
 	_arrive_callback = callback
 	harvest_target = Vector2(-1, -1)
+	_dest_world = grid.gridToWorld(grid_pos) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
 	path = _set_dest(grid_pos)
 
 
@@ -509,6 +509,7 @@ func set_drafted(value: bool) -> void:
 		build_target = Vector2(-1, -1)
 		gather_target = Vector2(-1, -1)
 		gather_items = {}
+		_idle_speech_timer = randf_range(IDLE_SPEECH_MIN, IDLE_SPEECH_MAX)
 		if path.is_empty():
 			_start_next_task()
 

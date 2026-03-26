@@ -151,7 +151,25 @@ static func spawn_trees(g: Grid) -> void:
 		sprite.texture = tree_texture
 		sprite.position = centre_pos
 		sprite.scale = Vector2(tree_s, tree_s)
+		sprite.z_index = int(pos.y) + 3
 		g.add_child(sprite)
+
+		var tree_img: Image = (tree_texture as Texture2D).get_image()
+		var tree_bm := BitMap.new()
+		tree_bm.create_from_image_alpha(tree_img)
+		var tree_polys := tree_bm.opaque_to_polygons(Rect2(Vector2.ZERO, tree_img.get_size()), 2.0)
+		if not tree_polys.is_empty():
+			var tree_body := StaticBody2D.new()
+			tree_body.position = centre_pos
+			var tree_origin := Vector2(tree_img.get_width() * 0.5, tree_img.get_height() * 0.5)
+			for poly: PackedVector2Array in tree_polys:
+				var cp := CollisionPolygon2D.new()
+				var scaled := PackedVector2Array()
+				for pt: Vector2 in poly:
+					scaled.append((pt - tree_origin) * tree_s)
+				cp.polygon = scaled
+				tree_body.add_child(cp)
+			g.add_child(tree_body)
 
 		var light := PointLight2D.new()
 		light.texture = light_texture
@@ -176,7 +194,7 @@ static func spawn_trees(g: Grid) -> void:
 			lily.texture = lily_tex
 			lily.position = g.gridToWorld(lc) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
 			lily.scale = Vector2(0.25, 0.25)
-			lily.z_index = 0
+			lily.z_index = int((lc as Vector2).y) + 1
 			g.add_child(lily)
 			var lily_light := PointLight2D.new()
 			lily_light.texture = light_texture
@@ -323,7 +341,25 @@ static func spawn_red_trees(g: Grid) -> void:
 		sprite.texture = tree_tex
 		sprite.scale = Vector2(s, s)
 		sprite.position = g.gridToWorld(pos) + Vector2(g.cell_size * 1.5, g.cell_size * 1.5)
+		sprite.z_index = int(pos.y) + 3
 		g.add_child(sprite)
+
+		var rtree_img: Image = tree_tex.get_image()
+		var rtree_bm := BitMap.new()
+		rtree_bm.create_from_image_alpha(rtree_img)
+		var rtree_polys := rtree_bm.opaque_to_polygons(Rect2(Vector2.ZERO, rtree_img.get_size()), 2.0)
+		if not rtree_polys.is_empty():
+			var rtree_body := StaticBody2D.new()
+			rtree_body.position = sprite.position
+			var rtree_origin := Vector2(rtree_img.get_width() * 0.5, rtree_img.get_height() * 0.5)
+			for poly: PackedVector2Array in rtree_polys:
+				var cp := CollisionPolygon2D.new()
+				var scaled := PackedVector2Array()
+				for pt: Vector2 in poly:
+					scaled.append((pt - rtree_origin) * s)
+				cp.polygon = scaled
+				rtree_body.add_child(cp)
+			g.add_child(rtree_body)
 
 		var light := PointLight2D.new()
 		light.texture = light_texture
@@ -353,6 +389,7 @@ static func spawn_red_trees(g: Grid) -> void:
 			sap.texture = sap_tex
 			sap.position = g.gridToWorld(sc) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
 			sap.scale = Vector2(sap_s, sap_s)
+			sap.z_index = int((sc as Vector2).y) + 1
 			g.add_child(sap)
 			var sap_light := PointLight2D.new()
 			sap_light.texture = light_texture
@@ -401,15 +438,30 @@ static func spawn_crash_site(g: Grid) -> void:
 			"Medical Supplies": 4,
 			"Rations": 5,
 		}
-		for dx in SHIP_TILES:
-			for dy in SHIP_TILES:
-				if (dx == 0 and dy == 0) or (dx == SHIP_TILES - 1 and dy == SHIP_TILES - 1):
-					continue
-				var c := ship_pos + Vector2(dx, dy)
+		var sp := g.gridToWorld(ship_pos) + Vector2(g.cell_size * SHIP_TILES * 0.5, g.cell_size * SHIP_TILES * 0.5)
+		var half := float(SHIP_TILES * g.cell_size) * 0.5
+		var a := half * 0.95
+		var b := half * 0.50
+		var tilt := -PI / 4.0
+
+		# Manually specified blocked tiles (dx, dy) relative to ship_pos top-left.
+		# Grid layout (4x4), y increases downward:
+		#   (0,0) (1,0) (2,0) (3,0)
+		#   (0,1) (1,1) (2,1) (3,1)
+		#   (0,2) (1,2) (2,2) (3,2)
+		#   (0,3) (1,3) (2,3) (3,3)
+		var blocked_offsets := [
+			Vector2(1, 0), Vector2(2, 0),
+			Vector2(0, 1), Vector2(1, 1), Vector2(2, 1), Vector2(3, 1),
+			Vector2(0, 2), Vector2(1, 2), Vector2(2, 2), Vector2(3, 2),
+			Vector2(1, 3), Vector2(2, 3),
+		]
+		for offset in blocked_offsets:
+			var c: Vector2 = ship_pos + offset
+			if g.grid.has(c):
 				g.grid[c].occupier = "CrashedShip"
 				g.grid[c].navigable = false
 
-		var sp := g.gridToWorld(ship_pos) + Vector2(g.cell_size * SHIP_TILES * 0.5, g.cell_size * SHIP_TILES * 0.5)
 		var s_scale := float(SHIP_TILES * g.cell_size) / float(ship_tex.get_width())
 
 		var ship_shadow := Sprite2D.new()
@@ -424,7 +476,26 @@ static func spawn_crash_site(g: Grid) -> void:
 		ship_sprite.texture = ship_tex
 		ship_sprite.scale = Vector2(s_scale, s_scale)
 		ship_sprite.position = sp
+		ship_sprite.z_index = int(ship_pos.y) + SHIP_TILES
 		g.add_child(ship_sprite)
+
+		var ship_body := StaticBody2D.new()
+		ship_body.position = sp
+		const STEPS := 20
+		var ship_pts := PackedVector2Array()
+		for i in STEPS:
+			var t := (float(i) / STEPS) * TAU
+			var ex := a * cos(t)
+			var ey := b * sin(t)
+			ship_pts.append(Vector2(
+				ex * cos(tilt) - ey * sin(tilt),
+				ex * sin(tilt) + ey * cos(tilt)
+			))
+		var ship_cp := CollisionPolygon2D.new()
+		ship_cp.polygon = ship_pts
+		ship_body.add_child(ship_cp)
+		ship_body.set_meta("occupier", "CrashedShip")
+		g.add_child(ship_body)
 
 	var hull_count := rng.randi_range(1, 2)
 	var hull_placed := 0
@@ -468,7 +539,26 @@ static func spawn_crash_site(g: Grid) -> void:
 			hull_sprite.texture = hull_tex
 			hull_sprite.scale = Vector2(h_scale, h_scale)
 			hull_sprite.position = hp_world
+			hull_sprite.z_index = int(hp.y) + HULL_TILES
 			g.add_child(hull_sprite)
+
+			var hull_img: Image = hull_tex.get_image()
+			var hull_bm := BitMap.new()
+			hull_bm.create_from_image_alpha(hull_img)
+			var hull_polys := hull_bm.opaque_to_polygons(Rect2(Vector2.ZERO, hull_img.get_size()), 2.0)
+			if not hull_polys.is_empty():
+				var hull_body := StaticBody2D.new()
+				hull_body.position = hp_world
+				var hull_origin := Vector2(hull_img.get_width() * 0.5, hull_img.get_height() * 0.5)
+				for poly: PackedVector2Array in hull_polys:
+					var hcp := CollisionPolygon2D.new()
+					var scaled := PackedVector2Array()
+					for pt: Vector2 in poly:
+						scaled.append((pt - hull_origin) * h_scale)
+					hcp.polygon = scaled
+					hull_body.add_child(hcp)
+				hull_body.set_meta("occupier", "HullFragment")
+				g.add_child(hull_body)
 
 			hull_placed += 1
 
@@ -515,7 +605,27 @@ static func spawn_crash_site(g: Grid) -> void:
 			crate_sprite.texture = crate_tex
 			crate_sprite.scale = Vector2(crate_scale, crate_scale)
 			crate_sprite.position = crate_world
+			crate_sprite.z_index = int(cp.y) + 1
 			g.add_child(crate_sprite)
+
+			var crate_image: Image = crate_tex.get_image()
+			var crate_bm := BitMap.new()
+			crate_bm.create_from_image_alpha(crate_image)
+			var crate_polys := crate_bm.opaque_to_polygons(Rect2(Vector2.ZERO, crate_image.get_size()), 2.0)
+			if not crate_polys.is_empty():
+				var crate_body := StaticBody2D.new()
+				crate_body.position = crate_world
+				var crate_origin := Vector2(crate_image.get_width() * 0.5, crate_image.get_height() * 0.5)
+				for poly: PackedVector2Array in crate_polys:
+					var cp2 := CollisionPolygon2D.new()
+					var scaled := PackedVector2Array()
+					for pt: Vector2 in poly:
+						scaled.append((pt - crate_origin) * crate_scale)
+					cp2.polygon = scaled
+					crate_body.add_child(cp2)
+				crate_body.set_meta("occupier", "SupplyCrate")
+				crate_body.set_meta("grid_pos", cp)
+				g.add_child(crate_body)
 
 			crate_placed += 1
 
@@ -579,7 +689,25 @@ static func spawn_driftwood(g: Grid) -> void:
 		sprite.texture = tex
 		sprite.scale = Vector2(s, s)
 		sprite.position = pos
+		sprite.z_index = int(cell.y) + 1
 		g.add_child(sprite)
+
+		var dw_img: Image = tex.get_image()
+		var dw_bm := BitMap.new()
+		dw_bm.create_from_image_alpha(dw_img)
+		var dw_polys := dw_bm.opaque_to_polygons(Rect2(Vector2.ZERO, dw_img.get_size()), 2.0)
+		if not dw_polys.is_empty():
+			var dw_body := StaticBody2D.new()
+			dw_body.position = pos
+			var dw_origin := Vector2(dw_img.get_width() * 0.5, dw_img.get_height() * 0.5)
+			for poly: PackedVector2Array in dw_polys:
+				var dcp := CollisionPolygon2D.new()
+				var scaled := PackedVector2Array()
+				for pt: Vector2 in poly:
+					scaled.append((pt - dw_origin) * s)
+				dcp.polygon = scaled
+				dw_body.add_child(dcp)
+			g.add_child(dw_body)
 
 		g.grid[cell].occupier = "Driftwood"
 		g.grid[cell].navigable = false
@@ -662,6 +790,8 @@ static func spawn_rocks(g: Grid) -> void:
 			if not polys.is_empty():
 				var body := StaticBody2D.new()
 				body.position = center_pos
+				body.set_meta("occupier", "Rock")
+				body.set_meta("grid_pos", cell)
 				# Sprite2D is centered, so offset polygon origin to match.
 				var origin := Vector2(image.get_width() * 0.5, image.get_height() * 0.5)
 				for poly: PackedVector2Array in polys:
@@ -874,7 +1004,7 @@ static func spawn_tide_pools(g: Grid) -> void:
 			rock_sprite.position = rp
 			var tide_rock_scale := float(g.cell_size) * 2.0 / float(rock_tex.get_height())
 			rock_sprite.scale = Vector2(tide_rock_scale, tide_rock_scale)
-			rock_sprite.z_index = 0
+			rock_sprite.z_index = int(rp.y / g.cell_size) + 1
 			var rock_mat := ShaderMaterial.new()
 			rock_mat.shader = fade_shader
 			rock_mat.set_shader_parameter("cardinal_mask", mask)
@@ -884,6 +1014,25 @@ static func spawn_tide_pools(g: Grid) -> void:
 			var rock_gc: Vector2 = g.worldToGrid(rp)
 			if g.grid.has(rock_gc):
 				g.grid[rock_gc].occupier = "TidePoolRock"
+
+			var tpr_img: Image = (rock_tex as Texture2D).get_image()
+			var tpr_bm := BitMap.new()
+			tpr_bm.create_from_image_alpha(tpr_img)
+			var tpr_polys := tpr_bm.opaque_to_polygons(Rect2(Vector2.ZERO, tpr_img.get_size()), 2.0)
+			if not tpr_polys.is_empty():
+				var tpr_body := StaticBody2D.new()
+				tpr_body.position = rp
+				var tpr_origin := Vector2(tpr_img.get_width() * 0.5, tpr_img.get_height() * 0.5)
+				for poly: PackedVector2Array in tpr_polys:
+					var tcp := CollisionPolygon2D.new()
+					var scaled := PackedVector2Array()
+					for pt: Vector2 in poly:
+						scaled.append((pt - tpr_origin) * tide_rock_scale)
+					tcp.polygon = scaled
+					tpr_body.add_child(tcp)
+				tpr_body.set_meta("occupier", "TidePoolRock")
+				tpr_body.set_meta("grid_pos", rock_gc)
+				g.add_child(tpr_body)
 
 		var ore_candidates: Array = rock_positions.keys()
 		ore_candidates.shuffle()
@@ -916,7 +1065,25 @@ static func spawn_tide_pools(g: Grid) -> void:
 			ore_sprite.texture = ore_tex
 			ore_sprite.position = ore_pos2
 			ore_sprite.scale = Vector2(ore_scale, ore_scale)
+			ore_sprite.z_index = int(gc.y) + 1
 			g.add_child(ore_sprite)
+
+			var ore_img: Image = ore_tex.get_image()
+			var ore_bm := BitMap.new()
+			ore_bm.create_from_image_alpha(ore_img)
+			var ore_polys := ore_bm.opaque_to_polygons(Rect2(Vector2.ZERO, ore_img.get_size()), 2.0)
+			if not ore_polys.is_empty():
+				var ore_body := StaticBody2D.new()
+				ore_body.position = ore_pos2
+				var ore_origin := Vector2(ore_img.get_width() * 0.5, ore_img.get_height() * 0.5)
+				for poly: PackedVector2Array in ore_polys:
+					var ocp := CollisionPolygon2D.new()
+					var scaled := PackedVector2Array()
+					for pt: Vector2 in poly:
+						scaled.append((pt - ore_origin) * ore_scale)
+					ocp.polygon = scaled
+					ore_body.add_child(ocp)
+				g.add_child(ore_body)
 
 
 static func spawn_monolith(g: Grid) -> void:
@@ -969,8 +1136,26 @@ static func spawn_monolith(g: Grid) -> void:
 	sprite.texture = tex
 	sprite.scale = Vector2(s, s)
 	sprite.position = centre_world
-	sprite.z_index = 1
+	sprite.z_index = int(pos.y) + TILES
 	g.add_child(sprite)
+
+	var mono_img: Image = tex.get_image()
+	var mono_bm := BitMap.new()
+	mono_bm.create_from_image_alpha(mono_img)
+	var mono_polys := mono_bm.opaque_to_polygons(Rect2(Vector2.ZERO, mono_img.get_size()), 2.0)
+	if not mono_polys.is_empty():
+		var mono_body := StaticBody2D.new()
+		mono_body.position = centre_world
+		var mono_origin := Vector2(mono_img.get_width() * 0.5, mono_img.get_height() * 0.5)
+		for poly: PackedVector2Array in mono_polys:
+			var mcp := CollisionPolygon2D.new()
+			var scaled := PackedVector2Array()
+			for pt: Vector2 in poly:
+				scaled.append((pt - mono_origin) * s)
+			mcp.polygon = scaled
+			mono_body.add_child(mcp)
+		mono_body.set_meta("occupier", "Monolith")
+		g.add_child(mono_body)
 
 	var glow_tex := _make_light_texture()
 	var glow := Sprite2D.new()
