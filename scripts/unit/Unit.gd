@@ -59,6 +59,11 @@ const IDLE_SPEECH_MAX := 120.0
 
 var task_queue: Array = []
 var _arrive_callback: Callable
+
+var _stuck_check_timer: float = 0.0
+var _stuck_last_pos: Vector2 = Vector2.ZERO
+const STUCK_CHECK_INTERVAL := 0.5
+const STUCK_MIN_MOVE := 4.0
 var drafted: bool = false:
 	set(value):
 		drafted = value
@@ -233,9 +238,13 @@ func set_walk_frames_down(frames: Array) -> void:
 const SEPARATION_RADIUS := 72.0
 const SEPARATION_FORCE := 80.0
 
+const OBSTACLE_BOTTOM_CLEARANCE := 12.0
+
 func _process(delta: float) -> void:
 	move(delta)
 	_tick_separation(delta)
+	_tick_obstacle_clearance()
+	_tick_stuck_check(delta)
 	_tick_walk_anim(delta)
 	_tick_gather(delta)
 	_tick_build(delta)
@@ -257,6 +266,47 @@ func _tick_separation(delta: float) -> void:
 		if dist < SEPARATION_RADIUS and dist > 0.1:
 			push += diff.normalized() * (1.0 - dist / SEPARATION_RADIUS) * SEPARATION_FORCE
 	position += push * delta
+
+
+func _tick_obstacle_clearance() -> void:
+	# Keep the character's feet (position) at least OBSTACLE_BOTTOM_CLEARANCE pixels
+	# below the bottom edge of any blocked tile directly above them.
+	var col := int(position.x / float(grid.cell_size))
+	# Skip if character is near a column edge (e.g. nudged against a lateral wall by
+	# separation) — we are not genuinely under that column's obstacles.
+	const EDGE_MARGIN := 20.0
+	var tile_left := float(col * grid.cell_size)
+	var tile_right := float((col + 1) * grid.cell_size)
+	if position.x < tile_left + EDGE_MARGIN or position.x > tile_right - EDGE_MARGIN:
+		return
+	var start_row := int(position.y / float(grid.cell_size))
+	for dy in range(1, 3):
+		var row := start_row - dy
+		if row < 0:
+			break
+		var tile := Vector2(col, row)
+		if not grid.grid.has(tile):
+			break
+		if not grid.grid[tile].navigable:
+			var tile_bottom := float((row + 1) * grid.cell_size)
+			if position.y < tile_bottom + OBSTACLE_BOTTOM_CLEARANCE:
+				position.y = tile_bottom + OBSTACLE_BOTTOM_CLEARANCE
+			break
+
+
+func _tick_stuck_check(delta: float) -> void:
+	if path.is_empty():
+		_stuck_check_timer = 0.0
+		_stuck_last_pos = position
+		return
+	_stuck_check_timer += delta
+	if _stuck_check_timer >= STUCK_CHECK_INTERVAL:
+		_stuck_check_timer = 0.0
+		if position.distance_to(_stuck_last_pos) < STUCK_MIN_MOVE:
+			path.clear()
+			_dest = Vector2(-1, -1)
+			_dest_world = Vector2(-1, -1)
+		_stuck_last_pos = position
 
 
 func _tick_idle_speech(delta: float) -> void:
@@ -357,7 +407,8 @@ func move(delta: float) -> void:
 					_apply_sprite(_tex_side, dir.x < 0)
 			elif dir.y < 0:
 				if not _is_walking_up:
-					_walk_frame_idx = _walk_up_initial_frame
+					var was_walking := _is_walking_side or _is_walking_down
+					_walk_frame_idx = _walk_loop_start_up if was_walking else _walk_up_initial_frame
 					_walk_frame_timer = 0.0
 				_is_walking_side = false
 				_is_walking_up = true
@@ -367,7 +418,8 @@ func move(delta: float) -> void:
 					_apply_sprite(_tex_up, false)
 			else:
 				if not _is_walking_down:
-					_walk_frame_idx = _walk_down_initial_frame
+					var was_walking := _is_walking_side or _is_walking_up
+					_walk_frame_idx = _walk_loop_start_down if was_walking else _walk_down_initial_frame
 					_walk_frame_timer = 0.0
 				_is_walking_side = false
 				_is_walking_up = false
@@ -650,6 +702,8 @@ func _closest_adjacent_to_source(source_pos: Vector2) -> Vector2:
 
 func _set_dest(grid_pos: Vector2) -> PackedVector2Array:
 	_dest = grid_pos
+	_stuck_check_timer = 0.0
+	_stuck_last_pos = position
 	return _build_path(grid_pos)
 
 
@@ -657,6 +711,23 @@ func _build_path(grid_pos: Vector2) -> PackedVector2Array:
 	# position is feet (bottom-centre); shift up to get tile centre for A*
 	var char_center := position + Vector2(0.0, -grid.cell_size * 0.5)
 	var from_nav := grid.worldToNav(char_center)
+	# If center landed inside a blocked tile (character pressed against an obstacle edge),
+	# snap to the nearest navigable tile so A* and LOS both start from a valid cell.
+	if not grid.nav_grid.get(from_nav, true):
+		var best := Vector2(-1, -1)
+		var best_d := INF
+		for dx in range(-2, 3):
+			for dy in range(-2, 3):
+				var nc := from_nav + Vector2(dx, dy)
+				if grid.nav_grid.get(nc, true):
+					var nc_world := grid.navToWorld(nc) + Vector2(Grid.NAV_CELL_SIZE * 0.5, Grid.NAV_CELL_SIZE * 0.5)
+					var d := char_center.distance_to(nc_world)
+					if d < best_d:
+						best_d = d
+						best = nc
+		if best != Vector2(-1, -1):
+			from_nav = best
+			char_center = grid.navToWorld(from_nav) + Vector2(Grid.NAV_CELL_SIZE * 0.5, Grid.NAV_CELL_SIZE * 0.5)
 	var dest_center := grid.gridToWorld(grid_pos) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
 	var to_nav := grid.worldToNav(dest_center)
 	var nav_path := pf.getPath(from_nav, to_nav)

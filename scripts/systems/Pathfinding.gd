@@ -184,6 +184,9 @@ func tightenPath(world_path: PackedVector2Array) -> PackedVector2Array:
 func _hasLOS(a: Vector2, b: Vector2) -> bool:
 	var a_nav := grid.worldToNav(a)
 	var b_nav := grid.worldToNav(b)
+	# Check the starting cell — if it's blocked there is no LOS from here
+	if grid.nav_grid.has(a_nav) and not grid.nav_grid[a_nav]:
+		return false
 	var x: int = int(a_nav.x);  var y: int = int(a_nav.y)
 	var x1: int = int(b_nav.x); var y1: int = int(b_nav.y)
 	var dx: int = x1 - x;       var dy: int = y1 - y

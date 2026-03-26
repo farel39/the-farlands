@@ -487,10 +487,12 @@ func _on_inspect_requested() -> void:
 				if d < best_dist:
 					best_dist = d
 					dest = c
-	if dest != Vector2(-1, -1):
-		closest.inspect_move_to(dest, func():
-			gui.show_monolith_dialog(get_viewport().get_mouse_position())
-		)
+	var monolith_cb := func():
+		gui.show_monolith_dialog(get_viewport().get_mouse_position())
+	if _is_adjacent_to(closest.get_grid_pos(), grid.monolith_pos, Vector2i(2, 2)):
+		monolith_cb.call()
+	elif dest != Vector2(-1, -1):
+		closest.inspect_move_to(dest, monolith_cb)
 
 
 func _on_cut_requested(grid_pos: Vector2) -> void:
@@ -611,13 +613,17 @@ func _show_inspect_popup(drafted: Array, anchor: Vector2, anchor_size: Vector2i,
 		return
 	var u_ref := best
 	var key := inspect_key
-	_inspect_pending = func():
-		u_ref.draft_inspect_to(dest, func():
-			if u_ref.data.inspect_lines.has(key):
-				var lines: Array = u_ref.data.inspect_lines[key]
-				if not lines.is_empty():
-					u_ref.show_speech(lines[randi() % lines.size()])
-		)
+	var speech_cb := func():
+		if u_ref.data.inspect_lines.has(key):
+			var lines: Array = u_ref.data.inspect_lines[key]
+			if not lines.is_empty():
+				u_ref.show_speech(lines[randi() % lines.size()])
+	# If already within 1 tile of the object, skip walking.
+	if _is_adjacent_to(best.get_grid_pos(), anchor, anchor_size):
+		_inspect_pending = speech_cb
+	else:
+		_inspect_pending = func():
+			u_ref.draft_inspect_to(dest, speech_cb)
 	_inspect_btn.text = "Inspect"
 	_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
 	_inspect_popup.visible = true
@@ -716,6 +722,16 @@ class _NavOverlay extends Node2D:
 	func _process(_delta: float) -> void:
 		if visible:
 			queue_redraw()
+
+
+func _is_adjacent_to(unit_grid: Vector2, anchor: Vector2, size: Vector2i = Vector2i(1, 1)) -> bool:
+	for dx in range(-1, size.x + 1):
+		for dy in range(-1, size.y + 1):
+			if dx >= 0 and dx < size.x and dy >= 0 and dy < size.y:
+				continue  # interior
+			if unit_grid == anchor + Vector2(dx, dy):
+				return true
+	return false
 
 
 func _find_adjacent_to(anchor: Vector2, unit: Unit, size: Vector2i = Vector2i(1, 1)) -> Vector2:
