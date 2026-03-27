@@ -62,6 +62,11 @@ var _arrive_callback: Callable
 
 var _stuck_check_timer: float = 0.0
 var _stuck_last_pos: Vector2 = Vector2.ZERO
+
+var _flashlight: PointLight2D = null
+var _flashlight_angle: float = PI * 0.5  # default facing down
+var _move_dir: Vector2 = Vector2.DOWN
+var sight_dir: Vector2 = Vector2.DOWN  # public: current cone direction (smoothed)
 const STUCK_CHECK_INTERVAL := 0.5
 const STUCK_MIN_MOVE := 4.0
 var drafted: bool = false:
@@ -238,9 +243,67 @@ func set_walk_frames_down(frames: Array) -> void:
 const SEPARATION_RADIUS := 72.0
 const SEPARATION_FORCE := 80.0
 
+func _setup_flashlight() -> void:
+	var size := 256
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var cx := size / 2
+	var cy := size / 2
+	var half_angle := deg_to_rad(38.0)
+	var max_r := float(size) * 0.5
+	for x in size:
+		for y in size:
+			var dx := float(x - cx)
+			var dy := float(y - cy)
+			if dx <= 0.0:
+				img.set_pixel(x, y, Color(0, 0, 0, 0))
+				continue
+			var dist := sqrt(dx * dx + dy * dy)
+			if dist > max_r:
+				img.set_pixel(x, y, Color(0, 0, 0, 0))
+				continue
+			var angle := atan2(absf(dy), dx)
+			if angle > half_angle:
+				img.set_pixel(x, y, Color(0, 0, 0, 0))
+				continue
+			# Fade out within the glow circle (glow radius ~76.8px world, cone scale=4 -> ~20 tex px)
+			const HOLE_R := 15.0
+			const HOLE_FADE := 8.0
+			var hole_alpha: float = clamp((dist - HOLE_R) / HOLE_FADE, 0.0, 1.0)
+			var alpha: float = pow(1.0 - angle / half_angle, 0.6) * pow(1.0 - dist / max_r, 0.5) * hole_alpha
+			img.set_pixel(x, y, Color(1, 1, 1, alpha))
+	_flashlight = PointLight2D.new()
+	_flashlight.texture = ImageTexture.create_from_image(img)
+	_flashlight.color = Color(1.0, 0.92, 0.72)
+	_flashlight.energy = 1.4
+	_flashlight.texture_scale = 7.0
+	_flashlight.blend_mode = PointLight2D.BLEND_MODE_MIX
+	_flashlight.position = Vector2(0.0, -grid.cell_size * 0.5)
+	add_child(_flashlight)
+	# Ambient glow sized to match flashlight range so its falloff doesn't
+	# create a visible dark ring inside the cone.
+	var glow := PointLight2D.new()
+	var glow_grad := Gradient.new()
+	glow_grad.set_color(0, Color(1, 1, 1, 1))
+	glow_grad.set_color(1, Color(1, 1, 1, 0))
+	var glow_tex := GradientTexture2D.new()
+	glow_tex.gradient = glow_grad
+	glow_tex.fill = GradientTexture2D.FILL_RADIAL
+	glow_tex.fill_from = Vector2(0.5, 0.5)
+	glow_tex.fill_to = Vector2(1.0, 0.5)
+	glow_tex.width = 128
+	glow_tex.height = 128
+	glow.texture = glow_tex
+	glow.color = Color(1.0, 0.93, 0.78)
+	glow.energy = 0.7
+	glow.texture_scale = 7.0
+	glow.position = Vector2(0.0, -grid.cell_size * 0.5)
+	add_child(glow)
+
 const OBSTACLE_BOTTOM_CLEARANCE := 12.0
 
 func _process(delta: float) -> void:
+	if _flashlight == null and grid != null:
+		_setup_flashlight()
 	move(delta)
 	_tick_separation(delta)
 	_tick_obstacle_clearance()
@@ -250,8 +313,14 @@ func _process(delta: float) -> void:
 	_tick_build(delta)
 	_tick_bubble(delta)
 	_tick_idle_speech(delta)
-	# Y-sort: units lower on screen (higher Y) render in front of rocks/objects
-	z_index = int(position.y / grid.cell_size)
+	if _flashlight:
+		if not path.is_empty():
+			_flashlight_angle = atan2(_move_dir.y, _move_dir.x)
+		_flashlight.rotation = lerp_angle(_flashlight.rotation, _flashlight_angle, delta * 12.0)
+		sight_dir = Vector2(cos(_flashlight.rotation), sin(_flashlight.rotation))
+	# Y-sort: transition at tile midpoint — character stays behind an object until
+	# their feet pass the centre of the tile below it, not just its bottom edge.
+	z_index = int((position.y - grid.cell_size * 0.5) / grid.cell_size)
 	if drafted:
 		queue_redraw()
 
@@ -269,12 +338,11 @@ func _tick_separation(delta: float) -> void:
 
 
 func _tick_obstacle_clearance() -> void:
-	# Keep the character's feet (position) at least OBSTACLE_BOTTOM_CLEARANCE pixels
-	# below the bottom edge of any blocked tile directly above them.
+	# Keep feet at least OBSTACLE_BOTTOM_CLEARANCE pixels below any blocked tile
+	# directly above. Edge margin of 40 px ensures lateral drift near a column
+	# boundary never triggers a false push-down.
 	var col := int(position.x / float(grid.cell_size))
-	# Skip if character is near a column edge (e.g. nudged against a lateral wall by
-	# separation) — we are not genuinely under that column's obstacles.
-	const EDGE_MARGIN := 20.0
+	const EDGE_MARGIN := 40.0
 	var tile_left := float(col * grid.cell_size)
 	var tile_right := float((col + 1) * grid.cell_size)
 	if position.x < tile_left + EDGE_MARGIN or position.x > tile_right - EDGE_MARGIN:
@@ -395,6 +463,7 @@ func move(delta: float) -> void:
 		var dist := to_next.length()
 		if _tex_down and _tex_side:
 			var dir := to_next.normalized()
+			_move_dir = dir
 			if abs(dir.x) > abs(dir.y):
 				if not _is_walking_side:
 					_walk_frame_idx = 0
@@ -736,6 +805,7 @@ func _build_path(grid_pos: Vector2) -> PackedVector2Array:
 	for p in nav_path:
 		world_path.append(grid.navToWorld(p) + Vector2(Grid.NAV_CELL_SIZE * 0.5, Grid.NAV_CELL_SIZE * 0.5))
 	world_path = pf.smoothPath(world_path)
+	world_path = pf.tightenPath(world_path)
 	if not world_path.is_empty():
 		world_path.remove_at(0)
 	# Convert tile centres to feet positions (add half cell_size downward)

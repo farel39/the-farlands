@@ -10,17 +10,24 @@ var all_units: Array = []
 var selected_units: Array = []
 var pending_tasks: Array = []
 
+var _fog_mat: ShaderMaterial = null
+var _fog_layer: CanvasLayer = null
+var _explored_img: Image = null
+var _explored_tex: ImageTexture = null
+# Cone texture is 256px at texture_scale=7 → reach = 128*7 = 896 world px
+const FOG_SIGHT_RADIUS := 860.0  # world px — matches visual cone reach
+
 var _inspect_popup: Panel = null
 var _inspect_btn: Button = null
 var _inspect_pending: Callable
 
 const DAY_DURATION := 120.0  # seconds per full day
-var day_time: float = 0.25   # start at midday (0=dawn, 0.25=day, 0.5=dusk, 0.75=night)
+var day_time: float = 0.5    # start mid-cycle (maps to ~0.71, deep night)
 
 # Color keyframes: [time, color]
 const SKY_COLORS: Array = [
 	[0.00, Color(0.40, 0.30, 0.60)],  # dawn  - soft purple
-	[0.25, Color(0.85, 0.90, 1.00)],  # day   - cool blue-white
+	[0.25, Color(0.58, 0.63, 0.75)],  # day   - muted cool blue
 	[0.50, Color(0.25, 0.20, 0.50)],  # dusk  - deep purple
 	[0.75, Color(0.03, 0.03, 0.15)],  # night - dark indigo
 	[1.00, Color(0.40, 0.30, 0.60)],  # dawn again
@@ -57,6 +64,92 @@ func _ready() -> void:
 	$Grid/Units.z_index = 1
 	_spawn_units()
 	_setup_inspect_popup()
+	_setup_fog()
+	_explore_crash_site()
+
+
+func _setup_fog() -> void:
+	_fog_layer = CanvasLayer.new()
+	_fog_layer.layer = 2
+	add_child(_fog_layer)
+	var fog_layer := _fog_layer
+	var fog_rect := ColorRect.new()
+	fog_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_fog_mat = ShaderMaterial.new()
+	_fog_mat.shader = load("res://art/shaders/fog_of_war.gdshader")
+	fog_rect.material = _fog_mat
+	fog_layer.add_child(fog_rect)
+	# Exploration texture: one pixel per grid cell, R=1 means explored
+	_explored_img = Image.create(grid.width, grid.height, false, Image.FORMAT_R8)
+	_explored_tex = ImageTexture.create_from_image(_explored_img)
+	_fog_mat.set_shader_parameter("explored_tex", _explored_tex)
+	_fog_mat.set_shader_parameter("world_size",
+		Vector2(grid.width * grid.cell_size, grid.height * grid.cell_size))
+
+func _explore_crash_site() -> void:
+	if grid.crash_site_pos == Vector2(-1, -1):
+		return
+	const SHIP_TILES := 4
+	var sx := int(grid.crash_site_pos.x)
+	var sy := int(grid.crash_site_pos.y)
+	for cx in range(sx - 1, sx + SHIP_TILES + 1):
+		for cy in range(sy - 1, sy + SHIP_TILES + 1):
+			if cx < 0 or cx >= grid.width or cy < 0 or cy >= grid.height:
+				continue
+			_explored_img.set_pixel(cx, cy, Color.WHITE)
+	_explored_tex.update(_explored_img)
+
+func _update_fog() -> void:
+	if _fog_mat == null:
+		return
+	var canvas_tf := get_viewport().get_canvas_transform()
+	var vp_size := get_viewport().get_visible_rect().size
+	var cs := float(grid.cell_size)
+	var explored_dirty := false
+	const CONE_HALF_ANGLE := 0.663
+	var sight_cells := int(FOG_SIGHT_RADIUS / cs) + 1
+	for u in all_units:
+		var gx := int(u.global_position.x / cs)
+		var gy := int(u.global_position.y / cs)
+		for dx in range(-sight_cells, sight_cells + 1):
+			for dy in range(-sight_cells, sight_cells + 1):
+				var cx := gx + dx
+				var cy := gy + dy
+				if cx < 0 or cx >= grid.width or cy < 0 or cy >= grid.height:
+					continue
+				# 1-tile ambient area around the character (grid coords)
+				var in_circle: bool = abs(dx) <= 1 and abs(dy) <= 1
+				var in_cone := false
+				if not in_circle:
+					var x0 := float(cx) * cs
+					var y0 := float(cy) * cs
+					# Check center + 4 corners so edge cells aren't missed
+					var samples: Array = [
+						Vector2(x0 + 0.5 * cs, y0 + 0.5 * cs),
+						Vector2(x0,        y0),
+						Vector2(x0 + cs,   y0),
+						Vector2(x0,        y0 + cs),
+						Vector2(x0 + cs,   y0 + cs),
+					]
+					for pt: Vector2 in samples:
+						if in_cone:
+							break
+						var dist := pt.distance_to(u.global_position)
+						if dist <= FOG_SIGHT_RADIUS and dist > 0.0:
+							var to_cell: Vector2 = (pt - u.global_position) / dist
+							var angle := acos(clamp(to_cell.dot(u.sight_dir), -1.0, 1.0))
+							if angle <= CONE_HALF_ANGLE:
+								in_cone = true
+				if (in_circle or in_cone) and _explored_img.get_pixel(cx, cy).r < 0.5:
+					_explored_img.set_pixel(cx, cy, Color.WHITE)
+					explored_dirty = true
+	if explored_dirty:
+		_explored_tex.update(_explored_img)
+	var tf_inv := canvas_tf.affine_inverse()
+	_fog_mat.set_shader_parameter("viewport_size", vp_size)
+	_fog_mat.set_shader_parameter("itf_origin", tf_inv.origin)
+	_fog_mat.set_shader_parameter("itf_x", tf_inv.x)
+	_fog_mat.set_shader_parameter("itf_y", tf_inv.y)
 
 
 func _place_water() -> void:
@@ -329,6 +422,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				u.set_drafted(not u.drafted)
 			get_viewport().set_input_as_handled()
 			return
+		if event.keycode == KEY_F:
+			_fog_layer.visible = not _fog_layer.visible
+			get_viewport().set_input_as_handled()
+			return
 	if _inspect_popup and _inspect_popup.visible:
 		if event is InputEventMouseButton and event.pressed:
 			_inspect_popup.visible = false
@@ -521,9 +618,10 @@ func _assign_tasks() -> void:
 			"build":   closest.queue_build(task.pos)
 
 
-func _process(delta: float) -> void:
-	day_time = fmod(day_time + delta / DAY_DURATION, 1.0)
-	var sky := _sky_color_at(day_time)
+func _process(_delta: float) -> void:
+	#day_time = fmod(day_time + delta / DAY_DURATION, 1.0)
+	# Remap to cycle only between "almost night" (0.58) and "deep night" (0.85)
+	var sky := _sky_color_at(0.74 + day_time * 0.08)
 	canvas_modulate.color = sky
 	# Lights fade in as the sky darkens (v is HSV brightness, 0=dark, 1=bright)
 	var night_factor := 1.0 - sky.v
@@ -531,6 +629,7 @@ func _process(delta: float) -> void:
 	grid.set_red_tree_light_energy(night_factor * 0.9)
 	grid.set_crab_light_energy(night_factor * 0.6)
 	grid.set_shadow_opacity(sky.v)
+	_update_fog()
 
 
 func _on_unit_idle(u: Unit) -> void:
