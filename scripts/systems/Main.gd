@@ -2,7 +2,7 @@ extends Node2D
 
 @onready var grid: Grid = $Grid
 @onready var pathfinding: Pathfinder = $Grid/Pathfinding
-@onready var unit: Unit = $Grid/Units/Unit
+@onready var unit: Unit = $Units/Unit
 @onready var gui = $CanvasLayer/GUI
 @onready var canvas_modulate: CanvasModulate = $CanvasModulate
 
@@ -18,6 +18,7 @@ var _explored_tex: ImageTexture = null
 const FOG_SIGHT_RADIUS := 860.0  # world px — matches visual cone reach
 
 var _inspect_popup: Panel = null
+var _bright_mode: bool = false
 var _inspect_btn: Button = null
 var _inspect_pending: Callable
 
@@ -51,6 +52,14 @@ func _ready() -> void:
 	_place_water()
 	grid.spawnCrashSite()
 	grid.spawnTidePools()
+	var dirt_layer := Node2D.new()
+	dirt_layer.name = "DirtLayer"
+	add_child(dirt_layer)
+	grid.dirt_layer = dirt_layer
+	var sprite_layer := Node2D.new()
+	sprite_layer.name = "SpriteLayer"
+	add_child(sprite_layer)
+	grid.sprite_layer = sprite_layer
 	grid.spawnTrees()
 	#grid.spawnRedTrees()
 	grid.spawnDriftwood()
@@ -61,7 +70,7 @@ func _ready() -> void:
 	gui.cut_requested.connect(_on_cut_requested)
 	gui.inspect_requested.connect(_on_inspect_requested)
 	grid.blueprint_placed.connect(_on_blueprint_placed)
-	$Grid/Units.z_index = 1
+	$Units.z_index = 1
 	_spawn_units()
 	_setup_inspect_popup()
 	_setup_fog()
@@ -316,7 +325,7 @@ func _spawn_units() -> void:
 	for i in 2:
 		var u: Unit = unit_scene.instantiate()
 		u.position = grid.gridToWorld(spawn_positions[i + 1]) + Vector2(grid.cell_size * 0.5, grid.cell_size)
-		$Grid/Units.add_child(u)
+		$Units.add_child(u)
 		units_to_setup.append(u)
 
 	# Preload engineer walk frames
@@ -618,11 +627,23 @@ func _assign_tasks() -> void:
 			"build":   closest.queue_build(task.pos)
 
 
+func toggle_brightness() -> void:
+	_bright_mode = not _bright_mode
+	if _bright_mode:
+		canvas_modulate.color = Color(1, 1, 1)
+		if _fog_layer:
+			_fog_layer.visible = false
+	else:
+		if _fog_layer:
+			_fog_layer.visible = true
+
+
 func _process(_delta: float) -> void:
 	#day_time = fmod(day_time + delta / DAY_DURATION, 1.0)
 	# Remap to cycle only between "almost night" (0.58) and "deep night" (0.85)
 	var sky := _sky_color_at(0.74 + day_time * 0.08)
-	canvas_modulate.color = sky
+	if not _bright_mode:
+		canvas_modulate.color = sky
 	# Lights fade in as the sky darkens (v is HSV brightness, 0=dark, 1=bright)
 	var night_factor := 1.0 - sky.v
 	grid.set_tree_light_energy(night_factor * 0.4)

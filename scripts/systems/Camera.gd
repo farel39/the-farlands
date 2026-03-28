@@ -4,6 +4,7 @@ var zoomFactor: float = 1.1   # multiply/divide per scroll step
 var zoomMin: float = 0.1
 var zoomMax: float = 2.0
 var dragSensitivity: float = 1.0
+var moveSpeed: float = 600.0
 
 func _unhandled_input(event):
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
@@ -20,5 +21,15 @@ func _unhandled_input(event):
 			else:
 				zoom = clamp(zoom / zoomFactor, Vector2(zoomMin, zoomMin), Vector2(zoomMax, zoomMax))
 # Called when the node enters the scene tree for the first time.
+func _process(delta: float) -> void:
+	var dir := Vector2.ZERO
+	if Input.is_key_pressed(KEY_LEFT):  dir.x -= 1
+	if Input.is_key_pressed(KEY_RIGHT): dir.x += 1
+	if Input.is_key_pressed(KEY_UP):    dir.y -= 1
+	if Input.is_key_pressed(KEY_DOWN):  dir.y += 1
+	if dir != Vector2.ZERO:
+		position += dir.normalized() * moveSpeed * delta / zoom.x
+
+
 func center_on(world_pos: Vector2) -> void:
 	position = world_pos

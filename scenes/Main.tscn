@@ -11,7 +11,10 @@
 [ext_resource type="Texture2D" uid="uid://clrt5fxjh8ada" path="res://art/environment/sand.png" id="7_bjd11"]
 [ext_resource type="Texture2D" uid="uid://d3f15xsj1174g" path="res://art/buildings/woodwall.png" id="10_krkin"]
 [ext_resource type="Texture2D" uid="uid://xv0es08wjdde" path="res://art/environment/alien dirt.png" id="11_adirt"]
+[ext_resource type="Texture2D" uid="uid://dd1qkhimov3l1" path="res://art/environment/alien dirt 3.png" id="12_adirt3"]
 [ext_resource type="Script" uid="uid://dcnsnwm7bloko" path="res://scripts/ui/GUI.gd" id="12_guisc"]
+[ext_resource type="Texture2D" uid="uid://cmnduqpyjpy6e" path="res://art/environment/alien lily pad plant.png" id="13_lilyplant"]
+[ext_resource type="Texture2D" uid="uid://bqthn5pcwptfl" path="res://art/environment/alien lily pad tree var 1 rev.png" id="14_lilypadtree"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1jtt4"]
 texture = ExtResource("11_adirt")
@@ -48,6 +51,22 @@ texture = ExtResource("11_adirt")
 texture_region_size = Vector2i(128, 128)
 0:0/0 = 0
 
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_adirt3"]
+texture = ExtResource("12_adirt3")
+texture_region_size = Vector2i(128, 128)
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_lilyplant"]
+texture = ExtResource("13_lilyplant")
+texture_region_size = Vector2i(128, 128)
+0:0/0 = 0
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_lilypadtree"]
+texture = ExtResource("14_lilypadtree")
+texture_region_size = Vector2i(128, 128)
+0:0/size_in_atlas = Vector2i(2, 2)
+0:0/0 = 0
+
 [sub_resource type="TileSet" id="TileSet_q8kdv"]
 tile_size = Vector2i(128, 128)
 sources/0 = SubResource("TileSetAtlasSource_1jtt4")
@@ -57,6 +76,9 @@ sources/3 = SubResource("TileSetAtlasSource_0cfwy")
 sources/4 = SubResource("TileSetAtlasSource_wood")
 sources/5 = SubResource("TileSetAtlasSource_qmy6f")
 sources/6 = SubResource("TileSetAtlasSource_adirt")
+sources/7 = SubResource("TileSetAtlasSource_adirt3")
+sources/8 = SubResource("TileSetAtlasSource_lilyplant")
+sources/9 = SubResource("TileSetAtlasSource_lilypadtree")
 
 [node name="Main" type="Node2D" unique_id=681001700]
 script = ExtResource("1_8llo8")
@@ -78,9 +100,9 @@ script = ExtResource("2_brr1f")
 
 [node name="Water" type="Node2D" parent="Grid" unique_id=419159445]
 
-[node name="Units" type="Node2D" parent="Grid" unique_id=1831316446]
+[node name="Units" type="Node2D" parent="." unique_id=1831316446]
 
-[node name="Unit" parent="Grid/Units" unique_id=1037223262 instance=ExtResource("3_d463r")]
+[node name="Unit" parent="Units" unique_id=1037223262 instance=ExtResource("3_d463r")]
 
 [node name="Pathfinding" type="Node2D" parent="Grid" unique_id=304914663]
 script = ExtResource("4_q8kdv")
@@ -89,6 +111,7 @@ script = ExtResource("4_q8kdv")
 script = ExtResource("3_pkilc")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1739644690]
+layer = 10
 
 [node name="GUI" type="Control" parent="CanvasLayer" unique_id=2043071587]
 layout_mode = 3

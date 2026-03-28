@@ -84,6 +84,8 @@ var _top_hud: HBoxContainer
 var _hud_bars: Dictionary = {}          # Unit → ProgressBar
 var _last_drafted_ids: Array = []
 
+var _bright_btn: Button
+
 
 func _ready() -> void:
 	_tree_panel = _build_tree_panel()
@@ -104,6 +106,28 @@ func _ready() -> void:
 
 	_build_construct_ui()
 	_build_top_hud()
+
+	_bright_btn = Button.new()
+	_bright_btn.text = "Brightness: OFF"
+	_bright_btn.anchor_left   = 0.0
+	_bright_btn.anchor_top    = 0.0
+	_bright_btn.anchor_right  = 0.0
+	_bright_btn.anchor_bottom = 0.0
+	_bright_btn.offset_left   = 0
+	_bright_btn.offset_right  = 140
+	_bright_btn.offset_top    = 0
+	_bright_btn.offset_bottom = 36
+	_bright_btn.pressed.connect(_on_bright_btn_pressed)
+	add_child(_bright_btn)
+
+
+func _on_bright_btn_pressed() -> void:
+	var main := get_tree().root.get_node("Main")
+	main.toggle_brightness()
+	if main._bright_mode:
+		_bright_btn.text = "Brightness: ON"
+	else:
+		_bright_btn.text = "Brightness: OFF"
 
 
 # ── Panel builders ────────────────────────────────────────────────────────────
@@ -834,7 +858,7 @@ func _refresh_top_hud(drafted: Array) -> void:
 
 func _process(_delta: float) -> void:
 	var drafted: Array = []
-	for u in grid.get_node("Units").get_children():
+	for u in grid.get_parent().get_node("Units").get_children():
 		if u is Unit and u.drafted:
 			drafted.append(u)
 

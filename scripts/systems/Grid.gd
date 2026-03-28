@@ -7,6 +7,7 @@ extends TileMap
 
 var grid: Dictionary = {}
 var tree_sprites: Dictionary = {}
+var tree_lights_by_root: Dictionary = {}
 var tree_lights: Array = []
 var red_tree_lights: Array = []
 var crab_lights: Array = []
@@ -16,6 +17,8 @@ var wood: int = 0
 
 var water_tiles: Dictionary = {}  # Vector2 → true
 var dirt_tiles: Dictionary = {}   # Vector2 → true
+var dirt_layer: Node2D = null     # sibling node for dirt sprites (avoids TileMap batch interference)
+var sprite_layer: Node2D = null   # sibling node for tree/lily/shadow sprites
 var crash_site_pos: Vector2 = Vector2(-1, -1)
 var monolith_pos: Vector2 = Vector2(-1, -1)
 var ship_inventory: Dictionary = {}
@@ -60,6 +63,9 @@ const LAYER_FLOOR = 0
 const LAYER_BUILDING = 1
 const LAYER_PREVIEW = 2
 
+const SOURCE_LILY_PLANT: int = 8
+const SOURCE_LILY_TREE: int  = 9
+
 
 func generateGrid():
 	for x in width:
@@ -92,7 +98,7 @@ func toggle_debug() -> void:
 
 # ── Spawn delegates ──────────────────────────────────────────────────────────
 
-func spawnTrees() -> void:      WorldSpawner.spawn_trees(self)
+func spawnTrees(spawn_visuals: bool = true) -> void: WorldSpawner.spawn_trees(self, spawn_visuals)
 func spawnRedTrees() -> void:   WorldSpawner.spawn_red_trees(self)
 func spawnCrashSite() -> void:  WorldSpawner.spawn_crash_site(self)
 func spawnDriftwood() -> void:  WorldSpawner.spawn_driftwood(self)
@@ -110,17 +116,17 @@ func get_tree_root(pos: Vector2) -> Vector2:
 
 func harvest_tree(pos: Vector2) -> void:
 	var root := get_tree_root(pos)
-	if not tree_sprites.has(root):
+	if not tree_lights_by_root.has(root):
 		return
 	wood += 1
-	var sprite: Sprite2D = tree_sprites[root]
-	for child in sprite.get_children():
-		if child is PointLight2D:
-			tree_lights.erase(child)
-	sprite.queue_free()
+	erase_cell(LAYER_BUILDING, root)
+	var light: PointLight2D = tree_lights_by_root[root]
+	tree_lights.erase(light)
+	light.queue_free()
+	tree_lights_by_root.erase(root)
 	tree_sprites.erase(root)
-	for dx in 3:
-		for dy in 3:
+	for dx in 2:
+		for dy in 2:
 			var c: Vector2 = root + Vector2(dx, dy)
 			if grid.has(c):
 				grid[c].occupier = null
@@ -132,14 +138,17 @@ func harvest_tree(pos: Vector2) -> void:
 
 func set_tree_light_energy(energy: float) -> void:
 	for light in tree_lights:
+		light.enabled = energy > 0.001
 		light.energy = energy
 
 func set_red_tree_light_energy(energy: float) -> void:
 	for light in red_tree_lights:
+		light.enabled = energy > 0.001
 		light.energy = energy
 
 func set_crab_light_energy(energy: float) -> void:
 	for light in crab_lights:
+		light.enabled = energy > 0.001
 		light.energy = energy
 
 func set_shadow_opacity(sky_brightness: float) -> void:
@@ -446,7 +455,13 @@ func erase_water_tile(pos: Vector2) -> void:
 
 
 func _ready() -> void:
-	pass
+	# Ensure the lily pad tree tile is defined as 2x2 in the atlas.
+	var src := tile_set.get_source(SOURCE_LILY_TREE) as TileSetAtlasSource
+	if not src.has_tile(Vector2i(0, 0)):
+		src.create_tile(Vector2i(0, 0), Vector2i(2, 2))
+	elif src.get_tile_size_in_atlas(Vector2i(0, 0)) != Vector2i(2, 2):
+		src.remove_tile(Vector2i(0, 0))
+		src.create_tile(Vector2i(0, 0), Vector2i(2, 2))
 
 func _process(_delta: float) -> void:
 	pass

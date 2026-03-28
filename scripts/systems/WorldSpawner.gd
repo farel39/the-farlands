@@ -1,6 +1,16 @@
 class_name WorldSpawner
 
 
+# A neighbour counts as "solid" for dirt fading if it's a dirt tile OR if it
+# has an occupier (rock, tree, etc.) — so the fade never bleeds toward objects.
+static func _dirt_solid(g: Grid, c: Vector2) -> bool:
+	if g.dirt_tiles.has(c):
+		return true
+	if g.grid.has(c) and g.grid[c].occupier != null:
+		return true
+	return false
+
+
 static func _make_light_texture() -> GradientTexture2D:
 	var gradient := Gradient.new()
 	gradient.set_color(0, Color(1, 1, 1, 1))
@@ -17,8 +27,11 @@ static func _make_light_texture() -> GradientTexture2D:
 	return tex
 
 
-static func spawn_trees(g: Grid) -> void:
-	var tree_texture = load("res://art/environment/alien lily pad tree.png")
+static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
+	var tree_textures: Array = [
+		load("res://art/environment/alien lily pad tree var 1 rev.png"),
+		load("res://art/environment/alien lily pad tree var 1 rev.png"),
+	]
 	var light_texture := _make_light_texture()
 	var placed: Array = []
 	const MIN_DISTANCE = 5
@@ -60,8 +73,8 @@ static func spawn_trees(g: Grid) -> void:
 			continue
 
 		var can_place := true
-		for dx in 3:
-			for dy in 3:
+		for dx in 2:
+			for dy in 2:
 				var c: Vector2 = pos + Vector2(dx, dy)
 				if not g.grid.has(c) or g.grid[c].occupier != null or g.water_tiles.has(c):
 					can_place = false
@@ -93,50 +106,34 @@ static func spawn_trees(g: Grid) -> void:
 					local_dirt[c] = true
 					g.dirt_tiles[c] = true
 
-		for dx in 3:
-			for dy in 3:
+		for dx in 2:
+			for dy in 2:
 				var c: Vector2 = pos + Vector2(dx, dy)
 				g.grid[c].occupier = "Tree"
 				g.grid[c].navigable = false
 				g.tree_root[c] = pos
 
-		tree_data.append({pos = pos, local_dirt = local_dirt})
+		tree_data.append({pos = pos, local_dirt = local_dirt, tex = tree_textures[rng.randi() % tree_textures.size()]})
 
-	var dirt_tex := load("res://art/environment/alien dirt.png")
-	var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
-
+	var dirt_floor := load("res://data/floors/dirt.tres")
 	for c in g.dirt_tiles:
-		var mask := 0
-		if g.dirt_tiles.has(c + Vector2(0, -1)): mask |= 1
-		if g.dirt_tiles.has(c + Vector2(1,  0)): mask |= 2
-		if g.dirt_tiles.has(c + Vector2(0,  1)): mask |= 4
-		if g.dirt_tiles.has(c + Vector2(-1, 0)): mask |= 8
-		var diag := 0
-		if g.dirt_tiles.has(c + Vector2( 1, -1)): diag |= 1
-		if g.dirt_tiles.has(c + Vector2( 1,  1)): diag |= 2
-		if g.dirt_tiles.has(c + Vector2(-1,  1)): diag |= 4
-		if g.dirt_tiles.has(c + Vector2(-1, -1)): diag |= 8
-		var dirt_sprite := Sprite2D.new()
-		dirt_sprite.texture = dirt_tex
-		dirt_sprite.position = g.gridToWorld(c) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
-		var dirt_scale := float(g.cell_size) / float(dirt_tex.get_width())
-		dirt_sprite.scale = Vector2(dirt_scale, dirt_scale)
-		if mask < 15 or diag < 15:
-			var mat: ShaderMaterial = dirt_base_mat.duplicate()
-			mat.set_shader_parameter("cardinal_mask", mask)
-			mat.set_shader_parameter("diag_mask", diag)
-			mat.set_shader_parameter("fade_width", 0.55)
-			dirt_sprite.material = mat
-		g.add_child(dirt_sprite)
+		g.grid[c].floorData = dirt_floor
+		g.refreshTile(c)
+
+	if not spawn_visuals:
+		return
 
 	var lily_tex := load("res://art/environment/alien lily pad plant.png")
+
+	var sp: Node2D = g.sprite_layer if g.sprite_layer != null else g
 
 	for td in tree_data:
 		var pos: Vector2 = td.pos
 		var local_dirt: Dictionary = td.local_dirt
 
-		var centre_pos := g.gridToWorld(pos) + Vector2(g.cell_size * 1.5, g.cell_size * 1.5)
-		var tree_s := float(g.cell_size * 3) / float(tree_texture.get_width())
+		var tree_texture: Texture2D = td.tex
+		var centre_pos := g.gridToWorld(pos) + Vector2(g.cell_size * 1.0, g.cell_size * 1.0)
+		var tree_s := float(g.cell_size * 2) / float(tree_texture.get_width())
 
 		var shadow := Sprite2D.new()
 		shadow.texture = tree_texture
@@ -144,15 +141,10 @@ static func spawn_trees(g: Grid) -> void:
 		shadow.scale = Vector2(tree_s * 1.1, tree_s * 0.22)
 		shadow.modulate = Color(0, 0, 0, 0.35)
 		shadow.z_index = -1
-		g.add_child(shadow)
+		sp.add_child(shadow)
 		g.shadow_sprites.append(shadow)
 
-		var sprite := Sprite2D.new()
-		sprite.texture = tree_texture
-		sprite.position = centre_pos
-		sprite.scale = Vector2(tree_s, tree_s)
-		sprite.z_index = int(pos.y) + 3
-		g.add_child(sprite)
+		g.set_cell(Grid.LAYER_BUILDING, pos, Grid.SOURCE_LILY_TREE, Vector2i(0, 0))
 
 		var tree_img: Image = (tree_texture as Texture2D).get_image()
 		var tree_bm := BitMap.new()
@@ -169,17 +161,15 @@ static func spawn_trees(g: Grid) -> void:
 					scaled.append((pt - tree_origin) * tree_s)
 				cp.polygon = scaled
 				tree_body.add_child(cp)
-			g.add_child(tree_body)
+			sp.add_child(tree_body)
 
+		# Tree light disabled for now
 		var light := PointLight2D.new()
-		light.texture = light_texture
-		light.color = Color(0.3, 1.0, 0.7)
-		light.energy = 0.0
-		light.texture_scale = 4.5
-		sprite.add_child(light)
-		g.tree_lights.append(light)
-
-		g.tree_sprites[pos] = sprite
+		light.enabled = false
+		light.position = centre_pos
+		sp.add_child(light)
+		g.tree_lights_by_root[pos] = light
+		g.tree_sprites[pos] = pos  # sentinel so harvest checks still work
 
 		var lily_candidates: Array = local_dirt.keys()
 		lily_candidates.shuffle()
@@ -195,14 +185,8 @@ static func spawn_trees(g: Grid) -> void:
 			lily.position = g.gridToWorld(lc) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
 			lily.scale = Vector2(0.25, 0.25)
 			lily.z_index = int((lc as Vector2).y) + 1
-			g.add_child(lily)
-			var lily_light := PointLight2D.new()
-			lily_light.texture = light_texture
-			lily_light.color = Color(0.3, 1.0, 0.7)
-			lily_light.energy = 0.0
-			lily_light.texture_scale = 4.5
-			lily.add_child(lily_light)
-			g.tree_lights.append(lily_light)
+			sp.add_child(lily)
+			# Lily light disabled for now
 			g.grid[lc].occupier = "LilyPad"
 			lily_placed += 1
 
@@ -223,7 +207,7 @@ static func spawn_red_trees(g: Grid) -> void:
 		load("res://art/environment/red alien tree sampling 3.png"),
 	]
 	var light_texture := _make_light_texture()
-	var dirt_tex      := load("res://art/environment/alien dirt.png")
+	var dirt_tex      := load("res://art/environment/alien dirt 3.png")
 	var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
 
 	var rng := RandomNumberGenerator.new()
@@ -341,7 +325,7 @@ static func spawn_red_trees(g: Grid) -> void:
 		sprite.texture = tree_tex
 		sprite.scale = Vector2(s, s)
 		sprite.position = g.gridToWorld(pos) + Vector2(g.cell_size * 1.5, g.cell_size * 1.5)
-		sprite.z_index = int(pos.y) + 3
+		sprite.z_index = int(pos.y) + 2
 		g.add_child(sprite)
 
 		var rtree_img: Image = tree_tex.get_image()

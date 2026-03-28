@@ -64,6 +64,7 @@ var _stuck_check_timer: float = 0.0
 var _stuck_last_pos: Vector2 = Vector2.ZERO
 
 var _flashlight: PointLight2D = null
+var _glow: PointLight2D = null
 var _flashlight_angle: float = PI * 0.5  # default facing down
 var _move_dir: Vector2 = Vector2.DOWN
 var sight_dir: Vector2 = Vector2.DOWN  # public: current cone direction (smoothed)
@@ -79,7 +80,7 @@ var selected: bool = false:
 		queue_redraw()
 
 func _ready() -> void:
-	grid = get_parent().get_parent() as Grid
+	grid = get_tree().root.get_node("Main/Grid") as Grid
 	pf = grid.get_node("Pathfinding")
 	gui = get_tree().root.get_node("Main/CanvasLayer/GUI")
 	_idle_speech_timer = randf_range(IDLE_SPEECH_MIN, IDLE_SPEECH_MAX)
@@ -298,6 +299,7 @@ func _setup_flashlight() -> void:
 	glow.texture_scale = 7.0
 	glow.position = Vector2(0.0, -grid.cell_size * 0.5)
 	add_child(glow)
+	_glow = glow
 
 const OBSTACLE_BOTTOM_CLEARANCE := 12.0
 
@@ -327,7 +329,7 @@ func _process(delta: float) -> void:
 
 func _tick_separation(delta: float) -> void:
 	var push := Vector2.ZERO
-	for other in grid.get_node("Units").get_children():
+	for other in get_parent().get_children():
 		if other == self or not other is Unit:
 			continue
 		var diff := position - (other as Unit).position

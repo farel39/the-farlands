@@ -5,4 +5,5 @@
 [resource]
 script = ExtResource("1_x7fw6")
 name = "Dirt"
+id = 7
 metadata/_custom_type_script = "uid://3smka053qnh5"
