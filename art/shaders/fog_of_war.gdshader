@@ -18,6 +18,6 @@ void fragment() {
 
 	// Explored: slight dark veil so memory areas feel darker than currently lit.
 	// Unexplored: full fog.
-	float fog_alpha = explored > 0.5 ? fog_color.a * 0.55 : fog_color.a;
+	float fog_alpha = explored > 0.5 ? fog_color.a * 0.78 : fog_color.a;
 	COLOR = vec4(fog_color.rgb, fog_alpha);
 }

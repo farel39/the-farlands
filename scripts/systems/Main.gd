@@ -661,6 +661,8 @@ func toggle_brightness() -> void:
 
 
 func _process(_delta: float) -> void:
+	if gui.followed_unit != null:
+		$Camera2D.position = gui.followed_unit.position
 	#day_time = fmod(day_time + delta / DAY_DURATION, 1.0)
 	# Remap to cycle only between "almost night" (0.58) and "deep night" (0.85)
 	var sky := _sky_color_at(0.74 + day_time * 0.08)
@@ -668,7 +670,7 @@ func _process(_delta: float) -> void:
 		canvas_modulate.color = sky
 	# Lights fade in as the sky darkens (v is HSV brightness, 0=dark, 1=bright)
 	var night_factor := 1.0 - sky.v
-	grid.set_tree_light_energy(night_factor * 0.4)
+	grid.set_tree_light_energy(night_factor * 0.8)
 	grid.set_red_tree_light_energy(night_factor * 0.9)
 	grid.set_crab_light_energy(night_factor * 0.6)
 	grid.set_shadow_opacity(sky.v)
@@ -698,7 +700,7 @@ func _handle_right_click() -> void:
 			continue
 		var occ: String = body.get_meta("occupier")
 		match occ:
-			"Rock", "TidePoolRock":
+			"Rock":
 				if drafted.is_empty(): return
 				var rock_grid: Vector2 = body.get_meta("grid_pos")
 				var best := _best_unit(drafted, rock_grid)

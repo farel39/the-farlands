@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://y0c6a3o7uulr"
-path="res://.godot/imported/tide pool rock.png-9c92159306748a48e8a1dec9cf32ea17.ctex"
+path="res://.godot/imported/tide pool ground overlay.png-2ac2aaa48e4d365eb0e296dd833b3b59.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://art/environment/tide pool rock.png"
-dest_files=["res://.godot/imported/tide pool rock.png-9c92159306748a48e8a1dec9cf32ea17.ctex"]
+source_file="res://art/environment/tide pool ground overlay.png"
+dest_files=["res://.godot/imported/tide pool ground overlay.png-2ac2aaa48e4d365eb0e296dd833b3b59.ctex"]
 
 [params]
 

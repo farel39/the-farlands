@@ -48,7 +48,9 @@ var _selected_tree: Vector2
 
 var _unit_panel: PanelContainer
 var _draft_btn: Button
+var _follow_btn: Button
 var _selected_unit: Unit
+var followed_unit: Unit = null
 
 var _group_panel: PanelContainer
 var _group_draft_btn: Button
@@ -159,8 +161,11 @@ func _build_unit_panel() -> PanelContainer:
 	uname.text = "Colonist"
 	_draft_btn = Button.new()
 	_draft_btn.pressed.connect(_on_draft_pressed)
+	_follow_btn = Button.new()
+	_follow_btn.pressed.connect(_on_follow_pressed)
 	vbox.add_child(uname)
 	vbox.add_child(_draft_btn)
+	vbox.add_child(_follow_btn)
 	panel.add_child(vbox)
 	return panel
 
@@ -622,6 +627,7 @@ func _on_cut_pressed() -> void:
 func show_unit_panel(unit: Unit, screen_pos: Vector2) -> void:
 	_selected_unit = unit
 	_draft_btn.text = "Undraft" if unit.drafted else "Draft"
+	_follow_btn.text = "Unfollow" if followed_unit == unit else "Follow Camera"
 	# Rebuild inventory rows inside the unit panel
 	var vbox := _unit_panel.get_child(0) as VBoxContainer
 	# Remove any previously added inventory rows (after the 3 fixed children)
@@ -657,6 +663,14 @@ func hide_unit_panel() -> void:
 func _on_draft_pressed() -> void:
 	_selected_unit.set_drafted(not _selected_unit.drafted)
 	_draft_btn.text = "Undraft" if _selected_unit.drafted else "Draft"
+	_unit_panel.visible = false
+
+
+func _on_follow_pressed() -> void:
+	if followed_unit == _selected_unit:
+		followed_unit = null
+	else:
+		followed_unit = _selected_unit
 	_unit_panel.visible = false
 
 

@@ -188,7 +188,15 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 				tree_body.add_child(cp)
 			sp.add_child(tree_body)
 
-		g.tree_lights_by_root[pos] = null
+		var light := PointLight2D.new()
+		light.texture = light_texture
+		light.color = Color(0.3, 1.0, 0.7)
+		light.energy = 0.0
+		light.texture_scale = 4.5 / tree_s
+		light.position = centre_pos
+		sp.add_child(light)
+		g.tree_lights.append(light)
+		g.tree_lights_by_root[pos] = light
 		g.tree_sprites[pos] = pos  # sentinel so harvest checks still work
 
 		var lily_candidates: Array = local_dirt.keys()
@@ -628,7 +636,7 @@ static func spawn_tide_pools(g: Grid) -> void:
 		load("res://art/environment/tide pool 1 tile var 2.png"),
 		load("res://art/environment/tide pool 1 tile var 3.png"),
 	]
-	var rock_tex   = load("res://art/environment/tide pool rock.png")
+	var rock_tex   = load("res://art/environment/tide pool ground overlay.png")
 	var iron_tex   = load("res://art/environment/iron ore vein.png")
 	var copper_tex = load("res://art/environment/copper ore vein.png")
 
@@ -770,12 +778,14 @@ static func spawn_tide_pools(g: Grid) -> void:
 			pool_sprite.scale = Vector2(pool_scale, pool_scale)
 			pool_sprite.z_index = 0
 			g.add_child(pool_sprite)
+			var sp: Node2D = g.sprite_layer if g.sprite_layer != null else g
 			var light := PointLight2D.new()
 			light.texture = light_tex
 			light.color = Color(0.1, 0.85, 1.0)
 			light.energy = 0.0
 			light.texture_scale = 5.5
-			pool_sprite.add_child(light)
+			light.position = cp
+			sp.add_child(light)
 			g.tree_lights.append(light)
 
 		var rock_positions: Dictionary = {}
@@ -806,7 +816,7 @@ static func spawn_tide_pools(g: Grid) -> void:
 			rock_sprite.position = rp
 			var tide_rock_scale := float(g.cell_size) * 2.0 / float(rock_tex.get_height())
 			rock_sprite.scale = Vector2(tide_rock_scale, tide_rock_scale)
-			rock_sprite.z_index = int(rp.y / g.cell_size) + 1
+			rock_sprite.z_index = 0
 			var rock_mat := ShaderMaterial.new()
 			rock_mat.shader = fade_shader
 			rock_mat.set_shader_parameter("cardinal_mask", mask)
@@ -816,25 +826,6 @@ static func spawn_tide_pools(g: Grid) -> void:
 			var rock_gc: Vector2 = g.worldToGrid(rp)
 			if g.grid.has(rock_gc):
 				g.grid[rock_gc].occupier = "TidePoolRock"
-
-			var tpr_img: Image = (rock_tex as Texture2D).get_image()
-			var tpr_bm := BitMap.new()
-			tpr_bm.create_from_image_alpha(tpr_img)
-			var tpr_polys := tpr_bm.opaque_to_polygons(Rect2(Vector2.ZERO, tpr_img.get_size()), 2.0)
-			if not tpr_polys.is_empty():
-				var tpr_body := StaticBody2D.new()
-				tpr_body.position = rp
-				var tpr_origin := Vector2(tpr_img.get_width() * 0.5, tpr_img.get_height() * 0.5)
-				for poly: PackedVector2Array in tpr_polys:
-					var tcp := CollisionPolygon2D.new()
-					var scaled := PackedVector2Array()
-					for pt: Vector2 in poly:
-						scaled.append((pt - tpr_origin) * tide_rock_scale)
-					tcp.polygon = scaled
-					tpr_body.add_child(tcp)
-				tpr_body.set_meta("occupier", "TidePoolRock")
-				tpr_body.set_meta("grid_pos", rock_gc)
-				g.add_child(tpr_body)
 
 		var ore_candidates: Array = rock_positions.keys()
 		ore_candidates.shuffle()
