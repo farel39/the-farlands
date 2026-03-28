@@ -99,7 +99,6 @@ func toggle_debug() -> void:
 # ── Spawn delegates ──────────────────────────────────────────────────────────
 
 func spawnTrees(spawn_visuals: bool = true) -> void: WorldSpawner.spawn_trees(self, spawn_visuals)
-func spawnRedTrees() -> void:   WorldSpawner.spawn_red_trees(self)
 func spawnCrashSite() -> void:  WorldSpawner.spawn_crash_site(self)
 func spawnDriftwood() -> void:  WorldSpawner.spawn_driftwood(self)
 func spawnRocks() -> void:      WorldSpawner.spawn_rocks(self)
@@ -119,14 +118,18 @@ func harvest_tree(pos: Vector2) -> void:
 	if not tree_lights_by_root.has(root):
 		return
 	wood += 1
-	erase_cell(LAYER_BUILDING, root)
-	var light: PointLight2D = tree_lights_by_root[root]
-	tree_lights.erase(light)
-	light.queue_free()
+	var light = tree_lights_by_root[root]
+	if light != null:
+		tree_lights.erase(light)
+		light.queue_free()
 	tree_lights_by_root.erase(root)
-	tree_sprites.erase(root)
-	for dx in 2:
-		for dy in 2:
+	if tree_sprites.has(root):
+		var sprite = tree_sprites[root]
+		if sprite is Node:
+			sprite.queue_free()
+		tree_sprites.erase(root)
+	for dx in 3:
+		for dy in 3:
 			var c: Vector2 = root + Vector2(dx, dy)
 			if grid.has(c):
 				grid[c].occupier = null
@@ -458,10 +461,10 @@ func _ready() -> void:
 	# Ensure the lily pad tree tile is defined as 2x2 in the atlas.
 	var src := tile_set.get_source(SOURCE_LILY_TREE) as TileSetAtlasSource
 	if not src.has_tile(Vector2i(0, 0)):
-		src.create_tile(Vector2i(0, 0), Vector2i(2, 2))
-	elif src.get_tile_size_in_atlas(Vector2i(0, 0)) != Vector2i(2, 2):
+		src.create_tile(Vector2i(0, 0), Vector2i(3, 3))
+	elif src.get_tile_size_in_atlas(Vector2i(0, 0)) != Vector2i(3, 3):
 		src.remove_tile(Vector2i(0, 0))
-		src.create_tile(Vector2i(0, 0), Vector2i(2, 2))
+		src.create_tile(Vector2i(0, 0), Vector2i(3, 3))
 
 func _process(_delta: float) -> void:
 	pass

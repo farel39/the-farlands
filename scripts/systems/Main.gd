@@ -61,7 +61,6 @@ func _ready() -> void:
 	add_child(sprite_layer)
 	grid.sprite_layer = sprite_layer
 	grid.spawnTrees()
-	#grid.spawnRedTrees()
 	grid.spawnDriftwood()
 	grid.spawnRocks()
 	grid.spawnMonolith()
@@ -75,6 +74,29 @@ func _ready() -> void:
 	_setup_inspect_popup()
 	_setup_fog()
 	_explore_crash_site()
+	_setup_ambient_light()
+
+
+func _setup_ambient_light() -> void:
+	# Forces ALL TileMap quadrants into "lit mode" permanently so that when
+	# PointLight2D nodes (tree lights, unit flashlight) appear, there is no
+	# visible rectangle boundary between lit and unlit quadrants.
+	var grad := Gradient.new()
+	grad.set_color(0, Color(1, 1, 1, 1))
+	grad.set_color(1, Color(1, 1, 1, 1))
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 8
+	tex.height = 8
+	var ambient := PointLight2D.new()
+	ambient.texture = tex
+	ambient.energy = 0.001
+	ambient.texture_scale = float(grid.width * grid.cell_size) / 4.0
+	ambient.position = Vector2(grid.width, grid.height) * grid.cell_size * 0.5
+	add_child(ambient)
 
 
 func _setup_fog() -> void:

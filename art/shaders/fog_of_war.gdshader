@@ -16,8 +16,8 @@ void fragment() {
 	vec2 grid_uv = clamp(world_pos / world_size, vec2(0.0), vec2(1.0));
 	float explored = texture(explored_tex, grid_uv).r;
 
-	// Explored: no fog — darkness comes from CanvasModulate, flashlight adds brightness.
+	// Explored: slight dark veil so memory areas feel darker than currently lit.
 	// Unexplored: full fog.
-	float fog_alpha = explored > 0.5 ? 0.0 : fog_color.a;
+	float fog_alpha = explored > 0.5 ? fog_color.a * 0.55 : fog_color.a;
 	COLOR = vec4(fog_color.rgb, fog_alpha);
 }

@@ -297,6 +297,7 @@ func _setup_flashlight() -> void:
 	glow.color = Color(1.0, 0.93, 0.78)
 	glow.energy = 0.7
 	glow.texture_scale = 7.0
+	glow.blend_mode = PointLight2D.BLEND_MODE_MIX
 	glow.position = Vector2(0.0, -grid.cell_size * 0.5)
 	add_child(glow)
 	_glow = glow

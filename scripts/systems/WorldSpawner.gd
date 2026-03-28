@@ -73,12 +73,11 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 			continue
 
 		var can_place := true
-		for dx in 2:
-			for dy in 2:
+		for dx in 3:
+			for dy in 3:
 				var c: Vector2 = pos + Vector2(dx, dy)
 				if not g.grid.has(c) or g.grid[c].occupier != null or g.water_tiles.has(c):
 					can_place = false
-					break
 			if not can_place:
 				break
 		if not can_place:
@@ -106,8 +105,8 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 					local_dirt[c] = true
 					g.dirt_tiles[c] = true
 
-		for dx in 2:
-			for dy in 2:
+		for dx in 3:
+			for dy in 3:
 				var c: Vector2 = pos + Vector2(dx, dy)
 				g.grid[c].occupier = "Tree"
 				g.grid[c].navigable = false
@@ -115,25 +114,45 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 
 		tree_data.append({pos = pos, local_dirt = local_dirt, tex = tree_textures[rng.randi() % tree_textures.size()]})
 
-	var dirt_floor := load("res://data/floors/dirt.tres")
-	for c in g.dirt_tiles:
-		g.grid[c].floorData = dirt_floor
-		g.refreshTile(c)
-
 	if not spawn_visuals:
 		return
 
 	var lily_tex := load("res://art/environment/alien lily pad plant.png")
-
 	var sp: Node2D = g.sprite_layer if g.sprite_layer != null else g
+
+	var dirt_tex := load("res://art/environment/alien dirt 3.png")
+	var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
+	for c in g.dirt_tiles:
+		var mask := 0
+		if g.dirt_tiles.has(c + Vector2(0, -1)): mask |= 1
+		if g.dirt_tiles.has(c + Vector2(1,  0)): mask |= 2
+		if g.dirt_tiles.has(c + Vector2(0,  1)): mask |= 4
+		if g.dirt_tiles.has(c + Vector2(-1, 0)): mask |= 8
+		var diag := 0
+		if g.dirt_tiles.has(c + Vector2( 1, -1)): diag |= 1
+		if g.dirt_tiles.has(c + Vector2( 1,  1)): diag |= 2
+		if g.dirt_tiles.has(c + Vector2(-1,  1)): diag |= 4
+		if g.dirt_tiles.has(c + Vector2(-1, -1)): diag |= 8
+		var dirt_sprite := Sprite2D.new()
+		dirt_sprite.texture = dirt_tex
+		dirt_sprite.position = g.gridToWorld(c) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+		# dirt 3.png is 128x128, cell_size is 128 — scale 1:1
+		dirt_sprite.scale = Vector2(1.0, 1.0)
+		if mask < 15 or diag < 15:
+			var mat: ShaderMaterial = dirt_base_mat.duplicate()
+			mat.set_shader_parameter("cardinal_mask", mask)
+			mat.set_shader_parameter("diag_mask", diag)
+			mat.set_shader_parameter("fade_width", 0.55)
+			dirt_sprite.material = mat
+		sp.add_child(dirt_sprite)
 
 	for td in tree_data:
 		var pos: Vector2 = td.pos
 		var local_dirt: Dictionary = td.local_dirt
 
 		var tree_texture: Texture2D = td.tex
-		var centre_pos := g.gridToWorld(pos) + Vector2(g.cell_size * 1.0, g.cell_size * 1.0)
-		var tree_s := float(g.cell_size * 2) / float(tree_texture.get_width())
+		var centre_pos := g.gridToWorld(pos) + Vector2(g.cell_size * 1.5, g.cell_size * 1.5)
+		var tree_s := float(g.cell_size * 3) / float(tree_texture.get_width())
 
 		var shadow := Sprite2D.new()
 		shadow.texture = tree_texture
@@ -144,7 +163,13 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 		sp.add_child(shadow)
 		g.shadow_sprites.append(shadow)
 
-		g.set_cell(Grid.LAYER_BUILDING, pos, Grid.SOURCE_LILY_TREE, Vector2i(0, 0))
+		var sprite := Sprite2D.new()
+		sprite.texture = tree_texture
+		sprite.position = centre_pos
+		sprite.scale = Vector2(tree_s, tree_s)
+		sprite.z_index = int(pos.y) + 2
+		sp.add_child(sprite)
+		g.tree_sprites[pos] = sprite
 
 		var tree_img: Image = (tree_texture as Texture2D).get_image()
 		var tree_bm := BitMap.new()
@@ -163,12 +188,7 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 				tree_body.add_child(cp)
 			sp.add_child(tree_body)
 
-		# Tree light disabled for now
-		var light := PointLight2D.new()
-		light.enabled = false
-		light.position = centre_pos
-		sp.add_child(light)
-		g.tree_lights_by_root[pos] = light
+		g.tree_lights_by_root[pos] = null
 		g.tree_sprites[pos] = pos  # sentinel so harvest checks still work
 
 		var lily_candidates: Array = local_dirt.keys()
@@ -186,204 +206,8 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 			lily.scale = Vector2(0.25, 0.25)
 			lily.z_index = int((lc as Vector2).y) + 1
 			sp.add_child(lily)
-			# Lily light disabled for now
 			g.grid[lc].occupier = "LilyPad"
 			lily_placed += 1
-
-
-static func spawn_red_trees(g: Grid) -> void:
-	const TREE_W     := 3
-	const TREE_H     := 3
-	const MAX_TREES  := 3
-	const MIN_DIST        := 12
-	const MIN_DIST_BLUE   := 25
-	const DIRT_RADIUS := 7.0
-	const SAP_RADIUS := 5.0
-
-	var tree_tex := load("res://art/environment/red alien tree.png")
-	var sap_textures: Array = [
-		load("res://art/environment/red alien tree sampling 1.png"),
-		load("res://art/environment/red alien tree sampling 2.png"),
-		load("res://art/environment/red alien tree sampling 3.png"),
-	]
-	var light_texture := _make_light_texture()
-	var dirt_tex      := load("res://art/environment/alien dirt 3.png")
-	var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
-
-	var rng := RandomNumberGenerator.new()
-	rng.randomize()
-
-	var shore_y: int = g.height / 2
-
-	var candidates: Array = []
-	for x in range(0, g.width - TREE_W):
-		for y in range(0, shore_y - TREE_W):
-			candidates.append(Vector2(x, y))
-	candidates.shuffle()
-
-	var placed: Array = []
-	var tree_data: Array = []
-
-	var blue_roots: Dictionary = {}
-	for root in g.tree_root.values():
-		blue_roots[root] = true
-	var blue_positions: Array = blue_roots.keys()
-
-	for pos in candidates:
-		if tree_data.size() >= MAX_TREES:
-			break
-		if pos.distance_to(Vector2(0, 0)) < 5:
-			continue
-		var too_close := false
-		for p in placed:
-			if pos.distance_to(p) < MIN_DIST:
-				too_close = true
-				break
-		if too_close:
-			continue
-		for bp in blue_positions:
-			if pos.distance_to(bp) < MIN_DIST_BLUE:
-				too_close = true
-				break
-		if too_close:
-			continue
-
-		var can_place := true
-		for dx in TREE_W:
-			for dy in TREE_H:
-				var c: Vector2 = pos + Vector2(dx, dy)
-				if not g.grid.has(c) or g.grid[c].occupier != null or g.water_tiles.has(c):
-					can_place = false
-					break
-			if not can_place:
-				break
-		if not can_place:
-			continue
-
-		placed.append(pos)
-
-		var centre: Vector2 = pos + Vector2(1, 1)
-		var local_dirt: Dictionary = {}
-		for dx in range(-8, 9):
-			for dy in range(-8, 9):
-				var c := Vector2(centre.x + dx, centre.y + dy)
-				if not g.grid.has(c) or g.water_tiles.has(c) or g.grid[c].occupier != null:
-					continue
-				var dist := Vector2(float(dx), float(dy)).length()
-				var paint := false
-				if dist <= 3.0:
-					paint = true
-				else:
-					var prob := pow(max(0.0, 1.0 - (dist - 3.0) / (DIRT_RADIUS - 3.0)), 0.5)
-					paint = rng.randf() < prob
-				if paint:
-					local_dirt[c] = true
-					g.dirt_tiles[c] = true
-
-		for dx in TREE_W:
-			for dy in TREE_H:
-				var c: Vector2 = pos + Vector2(dx, dy)
-				g.grid[c].occupier = "RedTree"
-				g.grid[c].navigable = false
-				g.tree_root[c] = pos
-
-		tree_data.append({pos = pos, local_dirt = local_dirt})
-
-	for td in tree_data:
-		var local_dirt: Dictionary = td.local_dirt
-		for c in local_dirt:
-			var mask := 0
-			if g.dirt_tiles.has(c + Vector2(0, -1)): mask |= 1
-			if g.dirt_tiles.has(c + Vector2(1,  0)): mask |= 2
-			if g.dirt_tiles.has(c + Vector2(0,  1)): mask |= 4
-			if g.dirt_tiles.has(c + Vector2(-1, 0)): mask |= 8
-			var diag := 0
-			if g.dirt_tiles.has(c + Vector2( 1, -1)): diag |= 1
-			if g.dirt_tiles.has(c + Vector2( 1,  1)): diag |= 2
-			if g.dirt_tiles.has(c + Vector2(-1,  1)): diag |= 4
-			if g.dirt_tiles.has(c + Vector2(-1, -1)): diag |= 8
-			var dirt_sprite := Sprite2D.new()
-			dirt_sprite.texture = dirt_tex
-			dirt_sprite.position = g.gridToWorld(c) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
-			var ds := float(g.cell_size) / float(dirt_tex.get_width())
-			dirt_sprite.scale = Vector2(ds, ds)
-			if mask < 15 or diag < 15:
-				var mat: ShaderMaterial = dirt_base_mat.duplicate()
-				mat.set_shader_parameter("cardinal_mask", mask)
-				mat.set_shader_parameter("diag_mask", diag)
-				mat.set_shader_parameter("fade_width", 0.55)
-				dirt_sprite.material = mat
-			g.add_child(dirt_sprite)
-
-	for td in tree_data:
-		var pos: Vector2 = td.pos
-		var local_dirt: Dictionary = td.local_dirt
-		var centre: Vector2 = pos + Vector2(1, 1)
-
-		var s := float(TREE_W * g.cell_size) / float(tree_tex.get_width())
-		var sprite := Sprite2D.new()
-		sprite.texture = tree_tex
-		sprite.scale = Vector2(s, s)
-		sprite.position = g.gridToWorld(pos) + Vector2(g.cell_size * 1.5, g.cell_size * 1.5)
-		sprite.z_index = int(pos.y) + 2
-		g.add_child(sprite)
-
-		var rtree_img: Image = tree_tex.get_image()
-		var rtree_bm := BitMap.new()
-		rtree_bm.create_from_image_alpha(rtree_img)
-		var rtree_polys := rtree_bm.opaque_to_polygons(Rect2(Vector2.ZERO, rtree_img.get_size()), 2.0)
-		if not rtree_polys.is_empty():
-			var rtree_body := StaticBody2D.new()
-			rtree_body.position = sprite.position
-			var rtree_origin := Vector2(rtree_img.get_width() * 0.5, rtree_img.get_height() * 0.5)
-			for poly: PackedVector2Array in rtree_polys:
-				var cp := CollisionPolygon2D.new()
-				var scaled := PackedVector2Array()
-				for pt: Vector2 in poly:
-					scaled.append((pt - rtree_origin) * s)
-				cp.polygon = scaled
-				rtree_body.add_child(cp)
-			g.add_child(rtree_body)
-
-		var light := PointLight2D.new()
-		light.texture = light_texture
-		light.color = Color(1.0, 0.35, 0.2)
-		light.energy = 0.0
-		light.texture_scale = 12.0
-		sprite.add_child(light)
-		g.red_tree_lights.append(light)
-
-		g.tree_sprites[pos] = sprite
-
-		var sap_candidates: Array = []
-		for c in local_dirt.keys():
-			if c.distance_to(centre) <= SAP_RADIUS and g.grid.has(c) and g.grid[c].occupier == null:
-				sap_candidates.append(c)
-		sap_candidates.shuffle()
-		var sap_count := rng.randi_range(3, 6)
-		var sap_placed := 0
-		for sc in sap_candidates:
-			if sap_placed >= sap_count:
-				break
-			if not g.grid.has(sc) or g.grid[sc].occupier != null:
-				continue
-			var sap_tex: Texture2D = sap_textures[rng.randi() % 3]
-			var sap_s := float(g.cell_size) / float(sap_tex.get_width())
-			var sap := Sprite2D.new()
-			sap.texture = sap_tex
-			sap.position = g.gridToWorld(sc) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
-			sap.scale = Vector2(sap_s, sap_s)
-			sap.z_index = int((sc as Vector2).y) + 1
-			g.add_child(sap)
-			var sap_light := PointLight2D.new()
-			sap_light.texture = light_texture
-			sap_light.color = Color(1.0, 0.35, 0.2)
-			sap_light.energy = 0.0
-			sap_light.texture_scale = 5.0
-			sap.add_child(sap_light)
-			g.red_tree_lights.append(sap_light)
-			g.grid[sc].occupier = "RedTreeSapling"
-			sap_placed += 1
 
 
 static func spawn_crash_site(g: Grid) -> void:
