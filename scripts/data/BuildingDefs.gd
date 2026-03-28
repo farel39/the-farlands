@@ -6,7 +6,7 @@ const DEFS: Dictionary = {
 		"category": "Production",
 		"sprite":   "res://art/buildings/fabricator realistic.png",
 		"cost":     {"Metal Scrap": 5, "Electronics": 2},
-		"size":     Vector2i(2, 2),
+		"size":     Vector2i(2, 1),
 		"navigable": false,
 		"occupier": "Fabricator",
 		"shadow":   false,

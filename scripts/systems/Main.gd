@@ -18,6 +18,8 @@ var _explored_tex: ImageTexture = null
 const FOG_SIGHT_RADIUS := 860.0  # world px — matches visual cone reach
 
 var _inspect_popup: Panel = null
+var _loot_btn: Button = null
+var _loot_pending: Callable
 var _bright_mode: bool = false
 var _visible_cells: Dictionary = {}     # Vector2i → true, current frame's lit cells
 var show_creatures: bool = false
@@ -553,14 +555,6 @@ func _handle_click() -> void:
 		gui.show_tree_panel(grid.get_tree_root(grid_pos), mouse_screen)
 		return
 
-	if cell.occupier == "CrashedShip":
-		gui.show_inventory_panel("Crashed Ship", grid.ship_inventory, mouse_screen)
-		return
-
-	if cell.occupier == "SupplyCrate":
-		var inv: Dictionary = grid.crate_inventories.get(grid_pos, {})
-		gui.show_inventory_panel("Supply Crate", inv, mouse_screen)
-		return
 
 	if not cell.navigable:
 		return
@@ -748,16 +742,49 @@ func _handle_right_click() -> void:
 				_inspect_pending = func():
 					u_ref.draft_move_to(grid.gridToWorld(dest) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85))
 				_inspect_btn.text = "Mine"
+				_loot_btn.visible = false
+				_inspect_popup.custom_minimum_size = Vector2(110, 36)
 				_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
 				_inspect_popup.visible = true
 				return
 			"CrashedShip", "HullFragment":
 				if drafted.is_empty(): return
 				_show_inspect_popup(drafted, grid.crash_site_pos, Vector2i(4, 4), "ship")
+				var best_ship := _best_unit(drafted, grid.crash_site_pos)
+				var dest_ship := _find_adjacent_to(grid.crash_site_pos, best_ship, Vector2i(4, 4))
+				if dest_ship != Vector2(-1, -1) or _is_adjacent_to(best_ship.get_grid_pos(), grid.crash_site_pos, Vector2i(4, 4)):
+					var u_ship := best_ship
+					_loot_pending = func():
+						var cb := func():
+							gui.show_char_inv_panel(u_ship)
+							gui.show_loot_panel("Crashed Ship", grid.ship_inventory, grid.crash_site_pos)
+						if _is_adjacent_to(u_ship.get_grid_pos(), grid.crash_site_pos, Vector2i(4, 4)):
+							cb.call()
+						else:
+							u_ship.draft_inspect_to(dest_ship, cb)
+					_loot_btn.visible = true
+					_inspect_popup.custom_minimum_size = Vector2(220, 36)
 				return
 			"SupplyCrate":
 				if drafted.is_empty(): return
-				_show_inspect_popup(drafted, body.get_meta("grid_pos"), Vector2i(1, 1), "crate")
+				var crate_pos: Vector2 = body.get_meta("grid_pos")
+				_show_inspect_popup(drafted, crate_pos, Vector2i(1, 1), "crate")
+				var best_crate := _best_unit(drafted, crate_pos)
+				var dest_crate := _find_adjacent_to(crate_pos, best_crate, Vector2i(1, 1))
+				if dest_crate != Vector2(-1, -1) or _is_adjacent_to(best_crate.get_grid_pos(), crate_pos, Vector2i(1, 1)):
+					var u_crate := best_crate
+					var cp := crate_pos
+					_loot_pending = func():
+						var cb := func():
+							gui.show_char_inv_panel(u_crate)
+							if grid.crate_inventories.has(cp):
+								gui.show_loot_panel("Supply Crate", grid.crate_inventories[cp], cp)
+						if _is_adjacent_to(u_crate.get_grid_pos(), cp, Vector2i(1, 1)):
+							cb.call()
+						else:
+							u_crate.draft_inspect_to(dest_crate, cb)
+					_loot_btn.visible = true
+					_inspect_popup.custom_minimum_size = Vector2(220, 36)
 				return
 			"Monolith":
 				if drafted.is_empty(): return
@@ -807,6 +834,8 @@ func _show_inspect_popup(drafted: Array, anchor: Vector2, anchor_size: Vector2i,
 		_inspect_pending = func():
 			u_ref.draft_inspect_to(dest, speech_cb)
 	_inspect_btn.text = "Inspect"
+	_loot_btn.visible = false
+	_inspect_popup.custom_minimum_size = Vector2(110, 36)
 	_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
 	_inspect_popup.visible = true
 
@@ -815,17 +844,35 @@ func _setup_inspect_popup() -> void:
 	_inspect_popup = Panel.new()
 	_inspect_popup.visible = false
 	_inspect_popup.custom_minimum_size = Vector2(110, 36)
-	var btn := Button.new()
-	btn.text = "Inspect"
-	btn.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 4)
-	btn.pressed.connect(func():
+
+	var hbox := HBoxContainer.new()
+	hbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 2)
+
+	var inspect_btn := Button.new()
+	inspect_btn.text = "Inspect"
+	inspect_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inspect_btn.pressed.connect(func():
 		_inspect_popup.visible = false
 		if _inspect_pending.is_valid():
 			_inspect_pending.call()
 			_inspect_pending = Callable()
 	)
-	_inspect_popup.add_child(btn)
-	_inspect_btn = btn
+	hbox.add_child(inspect_btn)
+	_inspect_btn = inspect_btn
+
+	_loot_btn = Button.new()
+	_loot_btn.text = "Loot"
+	_loot_btn.visible = false
+	_loot_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_loot_btn.pressed.connect(func():
+		_inspect_popup.visible = false
+		if _loot_pending.is_valid():
+			_loot_pending.call()
+			_loot_pending = Callable()
+	)
+	hbox.add_child(_loot_btn)
+
+	_inspect_popup.add_child(hbox)
 	$CanvasLayer.add_child(_inspect_popup)
 	_setup_debug_button()
 

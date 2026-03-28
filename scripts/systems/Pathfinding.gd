@@ -140,18 +140,19 @@ func smoothPath(world_path: PackedVector2Array) -> PackedVector2Array:
 func tightenPath(world_path: PackedVector2Array) -> PackedVector2Array:
 	if world_path.size() <= 2:
 		return world_path
-	const CLEARANCE := 5.0
+	const CLEARANCE := 18.0
 	var ns := float(Grid.NAV_CELL_SIZE)
-	var half := Vector2(ns * 0.5, ns * 0.5)
 	var result := PackedVector2Array()
 	result.append(world_path[0])
 	for i in range(1, world_path.size() - 1):
-		var prev    := world_path[i - 1]
-		var curr    := world_path[i]
-		var nxt     := world_path[i + 1]
-		var best    := curr
-		var best_len := INF
+		# Use last confirmed result point as prev so chained double-corners work correctly.
+		var prev     := result[result.size() - 1]
+		var curr     := world_path[i]
+		var nxt      := world_path[i + 1]
 		var curr_nav := grid.worldToNav(curr)
+		var orig_len := prev.distance_to(curr) + curr.distance_to(nxt)
+		var best_len := orig_len
+		var best_pts: Array = [curr]
 		for dx in range(-1, 2):
 			for dy in range(-1, 2):
 				if dx == 0 and dy == 0:
@@ -159,24 +160,52 @@ func tightenPath(world_path: PackedVector2Array) -> PackedVector2Array:
 				var nb := curr_nav + Vector2(dx, dy)
 				if not grid.nav_grid.has(nb) or grid.nav_grid[nb]:
 					continue
-				var tile_tl    := grid.navToWorld(nb)
-				var tile_center := tile_tl + half
+				var tile_tl     := grid.navToWorld(nb)
+				var tile_center := tile_tl + Vector2(ns * 0.5, ns * 0.5)
 				var corners := [
 					tile_tl,
 					tile_tl + Vector2(ns, 0),
 					tile_tl + Vector2(0, ns),
 					tile_tl + Vector2(ns, ns),
 				]
+				# Single corner — hug one corner of the obstacle.
 				for corner: Vector2 in corners:
 					var push := (corner - tile_center).normalized()
-					var candidate := (corner + push * CLEARANCE) - half
-					if not (_hasLOS(prev, candidate) and _hasLOS(candidate, nxt)):
+					var cand := corner + push * CLEARANCE
+					if not (_hasLOS(prev, cand) and _hasLOS(cand, nxt)):
 						continue
-					var total_len := prev.distance_to(candidate) + candidate.distance_to(nxt)
-					if total_len < best_len:
-						best_len = total_len
-						best = candidate
-		result.append(best)
+					var len := prev.distance_to(cand) + cand.distance_to(nxt)
+					if len < best_len:
+						best_len = len
+						best_pts = [cand]
+				# Double corner — hug the entry corner (closest to prev) then the
+				# exit corner (closest to nxt) of the same obstacle tile.
+				# This handles going all the way around a single tile.
+				var c1: Vector2 = corners[0]
+				var c1_dist := prev.distance_to(corners[0])
+				var c2: Vector2 = corners[0]
+				var c2_dist := nxt.distance_to(corners[0])
+				for corner: Vector2 in corners:
+					if prev.distance_to(corner) < c1_dist:
+						c1_dist = prev.distance_to(corner)
+						c1 = corner
+					if nxt.distance_to(corner) < c2_dist:
+						c2_dist = nxt.distance_to(corner)
+						c2 = corner
+				if c1 == c2:
+					continue  # same corner, already handled by single above
+				var push1 := (c1 - tile_center).normalized()
+				var push2 := (c2 - tile_center).normalized()
+				var cand1 := c1 + push1 * CLEARANCE
+				var cand2 := c2 + push2 * CLEARANCE
+				if not (_hasLOS(prev, cand1) and _hasLOS(cand1, cand2) and _hasLOS(cand2, nxt)):
+					continue
+				var len := prev.distance_to(cand1) + cand1.distance_to(cand2) + cand2.distance_to(nxt)
+				if len < best_len:
+					best_len = len
+					best_pts = [cand1, cand2]
+		for pt in best_pts:
+			result.append(pt)
 	result.append(world_path[world_path.size() - 1])
 	return result
 

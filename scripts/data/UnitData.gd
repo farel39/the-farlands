@@ -11,3 +11,4 @@ var inspect_lines: Dictionary = {}  # object_type → Array of lines
 var health: float = 100.0
 var max_health: float = 100.0
 var inventory: Dictionary = {}  # item_name → count
+var equipment: Dictionary = {"Head": "", "L.Arm": "", "R.Arm": "", "Legs": ""}
