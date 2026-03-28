@@ -40,6 +40,7 @@ func _apply_sprite(tex: Texture2D, flip: bool) -> void:
 
 
 func _process(delta: float) -> void:
+	z_index = int(position.y / float(grid.cell_size)) + 1
 	if not _path.is_empty():
 		_walk(delta)
 	else:

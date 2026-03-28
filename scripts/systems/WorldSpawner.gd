@@ -1002,6 +1002,7 @@ static func spawn_crabs(g: Grid) -> void:
 		crab.shore_y_min = shore_y - SHORE_BAND - 2
 		crab.shore_y_max = shore_y - 1
 		g.add_child(crab)
+		g.crabs.append(crab)
 		crab.setup(tex_down, tex_side, g)
 
 		var light := PointLight2D.new()

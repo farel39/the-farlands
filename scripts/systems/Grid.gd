@@ -11,6 +11,7 @@ var tree_lights_by_root: Dictionary = {}
 var tree_lights: Array = []
 var red_tree_lights: Array = []
 var crab_lights: Array = []
+var crabs: Array = []
 var shadow_sprites: Array = []
 var tree_root: Dictionary = {}   # maps any tree cell → its root (top-left) pos
 var wood: int = 0

@@ -663,7 +663,6 @@ func hide_unit_panel() -> void:
 func _on_draft_pressed() -> void:
 	_selected_unit.set_drafted(not _selected_unit.drafted)
 	_draft_btn.text = "Undraft" if _selected_unit.drafted else "Draft"
-	_unit_panel.visible = false
 
 
 func _on_follow_pressed() -> void:
@@ -671,7 +670,7 @@ func _on_follow_pressed() -> void:
 		followed_unit = null
 	else:
 		followed_unit = _selected_unit
-	_unit_panel.visible = false
+	_follow_btn.text = "Unfollow" if followed_unit == _selected_unit else "Follow Camera"
 
 
 # ── Group panel ───────────────────────────────────────────────────────────────

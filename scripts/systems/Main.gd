@@ -19,6 +19,8 @@ const FOG_SIGHT_RADIUS := 860.0  # world px — matches visual cone reach
 
 var _inspect_popup: Panel = null
 var _bright_mode: bool = false
+var _visible_cells: Dictionary = {}     # Vector2i → true, current frame's lit cells
+var show_creatures: bool = false
 var _inspect_btn: Button = null
 var _inspect_pending: Callable
 
@@ -65,6 +67,7 @@ func _ready() -> void:
 	grid.spawnRocks()
 	grid.spawnMonolith()
 	grid.spawnCrabs()
+	_setup_entity_visibility()
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
 	gui.inspect_requested.connect(_on_inspect_requested)
@@ -117,6 +120,36 @@ func _setup_fog() -> void:
 	_fog_mat.set_shader_parameter("world_size",
 		Vector2(grid.width * grid.cell_size, grid.height * grid.cell_size))
 
+func _setup_entity_visibility() -> void:
+	for crab in grid.crabs:
+		var sprite: Sprite2D = crab.get_node_or_null("Sprite2D")
+		if sprite:
+			sprite.visible = false
+		for child in crab.get_children():
+			if child is PointLight2D:
+				child.visible = false
+				break
+
+
+func _update_entity_visibility() -> void:
+	var cs := float(grid.cell_size)
+	for crab in grid.crabs:
+		if not is_instance_valid(crab):
+			continue
+		var cell := Vector2i(int(crab.global_position.x / cs), int(crab.global_position.y / cs))
+		var visible: bool = show_creatures or _visible_cells.has(cell)
+		var sprite: Sprite2D = crab.get_node_or_null("Sprite2D")
+		var crab_light: PointLight2D = null
+		for child in crab.get_children():
+			if child is PointLight2D:
+				crab_light = child
+				break
+		if sprite:
+			sprite.visible = visible
+		if crab_light:
+			crab_light.visible = visible
+
+
 func _explore_crash_site() -> void:
 	if grid.crash_site_pos == Vector2(-1, -1):
 		return
@@ -139,6 +172,7 @@ func _update_fog() -> void:
 	var explored_dirty := false
 	const CONE_HALF_ANGLE := 0.663
 	var sight_cells := int(FOG_SIGHT_RADIUS / cs) + 1
+	_visible_cells.clear()
 	for u in all_units:
 		var gx := int(u.global_position.x / cs)
 		var gy := int(u.global_position.y / cs)
@@ -171,9 +205,11 @@ func _update_fog() -> void:
 							var angle := acos(clamp(to_cell.dot(u.sight_dir), -1.0, 1.0))
 							if angle <= CONE_HALF_ANGLE:
 								in_cone = true
-				if (in_circle or in_cone) and _explored_img.get_pixel(cx, cy).r < 0.5:
-					_explored_img.set_pixel(cx, cy, Color.WHITE)
-					explored_dirty = true
+				if in_circle or in_cone:
+					_visible_cells[Vector2i(cx, cy)] = true
+					if _explored_img.get_pixel(cx, cy).r < 0.5:
+						_explored_img.set_pixel(cx, cy, Color.WHITE)
+						explored_dirty = true
 	if explored_dirty:
 		_explored_tex.update(_explored_img)
 	var tf_inv := canvas_tf.affine_inverse()
@@ -468,6 +504,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if grid.placement_mode:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		gui.hide_unit_panel()
 		_handle_right_click()
 		get_viewport().set_input_as_handled()
 		return
@@ -675,6 +712,7 @@ func _process(_delta: float) -> void:
 	grid.set_crab_light_energy(night_factor * 0.6)
 	grid.set_shadow_opacity(sky.v)
 	_update_fog()
+	_update_entity_visibility()
 
 
 func _on_unit_idle(u: Unit) -> void:
@@ -828,6 +866,19 @@ func _setup_debug_button() -> void:
 	)
 	nav_overlay.visible = false
 	$CanvasLayer.add_child(nav_btn)
+
+	var creatures_btn := Button.new()
+	creatures_btn.text = "Show Creatures"
+	creatures_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	creatures_btn.offset_left = -160
+	creatures_btn.offset_right = -8
+	creatures_btn.offset_top = 88
+	creatures_btn.offset_bottom = 120
+	creatures_btn.pressed.connect(func():
+		show_creatures = not show_creatures
+		creatures_btn.text = "Hide Creatures" if show_creatures else "Show Creatures"
+	)
+	$CanvasLayer.add_child(creatures_btn)
 
 
 class _CollisionOverlay extends Node2D:
