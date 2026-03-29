@@ -88,6 +88,7 @@ var _hud_bars: Dictionary = {}          # Unit → ProgressBar
 var _last_drafted_ids: Array = []
 
 var _bright_btn: Button
+var _minimap: Control
 
 # ── Character inventory panel ─────────────────────────────────────────────────
 var _char_inv_panel: PanelContainer
@@ -105,6 +106,7 @@ var _loot_title_lbl: Label
 var _loot_grid: GridContainer
 var _loot_source_inv: Dictionary = {}
 var _loot_source_pos: Vector2 = Vector2(-1, -1)
+var _loot_drop_slots: Array = []
 
 
 func _ready() -> void:
@@ -144,6 +146,58 @@ func _ready() -> void:
 	_bright_btn.offset_bottom = 36
 	_bright_btn.pressed.connect(_on_bright_btn_pressed)
 	add_child(_bright_btn)
+
+	_minimap = _MinimapControl.new(grid, camera, _all_units)
+	const MM := 130
+	_minimap.anchor_left   = 1.0
+	_minimap.anchor_top    = 1.0
+	_minimap.anchor_right  = 1.0
+	_minimap.anchor_bottom = 1.0
+	_minimap.offset_left   = -(MM + 4)
+	_minimap.offset_right  = -4
+	_minimap.offset_top    = -MM
+	_minimap.offset_bottom = 0
+	add_child(_minimap)
+
+	# Minimize button — floats just above the top-right corner of the minimap
+	var mm_min_btn := Button.new()
+	mm_min_btn.text = "Minimize"
+	mm_min_btn.custom_minimum_size = Vector2(44, 14)
+	mm_min_btn.add_theme_font_size_override("font_size", 8)
+	mm_min_btn.anchor_left   = 1.0
+	mm_min_btn.anchor_top    = 1.0
+	mm_min_btn.anchor_right  = 1.0
+	mm_min_btn.anchor_bottom = 1.0
+	mm_min_btn.offset_left   = -48
+	mm_min_btn.offset_right  = -4
+	mm_min_btn.offset_top    = -(MM + 14)
+	mm_min_btn.offset_bottom = -(MM)
+	add_child(mm_min_btn)
+
+	# Restore button — hidden by default, bottom-right, same size as Inventory button
+	var mm_restore_btn := Button.new()
+	mm_restore_btn.text = "Minimap"
+	mm_restore_btn.visible = false
+	mm_restore_btn.anchor_left   = 1.0
+	mm_restore_btn.anchor_top    = 1.0
+	mm_restore_btn.anchor_right  = 1.0
+	mm_restore_btn.anchor_bottom = 1.0
+	mm_restore_btn.offset_left   = -124
+	mm_restore_btn.offset_right  = -4
+	mm_restore_btn.offset_top    = -40
+	mm_restore_btn.offset_bottom = 0
+	add_child(mm_restore_btn)
+
+	mm_min_btn.pressed.connect(func():
+		_minimap.visible = false
+		mm_min_btn.visible = false
+		mm_restore_btn.visible = true
+	)
+	mm_restore_btn.pressed.connect(func():
+		_minimap.visible = true
+		mm_min_btn.visible = true
+		mm_restore_btn.visible = false
+	)
 
 
 func _on_bright_btn_pressed() -> void:
@@ -481,18 +535,12 @@ func _refresh_global_inventory() -> void:
 	for c in _global_inv_vbox.get_children():
 		c.queue_free()
 
-	# Collect all sources: characters + ship + crates
+	# Collect sources: characters only
 	var sources: Array = []
 	for u in _all_units:
 		var u_node := u as Unit
 		if not u_node.data.inventory.is_empty():
 			sources.append({"label": u_node.data.name, "inv": u_node.data.inventory})
-	if not grid.ship_inventory.is_empty():
-		sources.append({"label": "Crashed Ship", "inv": grid.ship_inventory})
-	for pos in grid.crate_inventories:
-		var inv: Dictionary = grid.crate_inventories[pos]
-		if not inv.is_empty():
-			sources.append({"label": "Crate (%d,%d)" % [int(pos.x), int(pos.y)], "inv": inv})
 
 	# Aggregate totals per item
 	var totals: Dictionary = {}
@@ -593,13 +641,18 @@ func _refresh_units_panel() -> void:
 	for u in _all_units:
 		var u_node := u as Unit
 
-		# Card: clickable panel for the whole unit entry
+		# Card: clicking anywhere on card centers camera and escapes follow mode
 		var card := PanelContainer.new()
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		card.gui_input.connect(func(event: InputEvent):
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				followed_unit = null
 				camera.center_on(u_node.position)
 		)
+
+		# Wrap card contents in a VBoxContainer so button sits below the row
+		var card_vbox := VBoxContainer.new()
+		card_vbox.mouse_filter = Control.MOUSE_FILTER_PASS
 
 		# Single row: [portrait | name/role/health | inventory grid]
 		var row := HBoxContainer.new()
@@ -611,15 +664,9 @@ func _refresh_units_panel() -> void:
 		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		portrait.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		portrait.mouse_filter = Control.MOUSE_FILTER_STOP
-		portrait.tooltip_text = "Open inventory"
+		portrait.mouse_filter = Control.MOUSE_FILTER_PASS
 		if u_node.data.portrait:
 			portrait.texture = u_node.data.portrait
-		portrait.gui_input.connect(func(event: InputEvent):
-			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-				show_char_inv_panel(u_node)
-				get_viewport().set_input_as_handled()
-		)
 		row.add_child(portrait)
 
 		var col := VBoxContainer.new()
@@ -642,13 +689,7 @@ func _refresh_units_panel() -> void:
 		bar.max_value = u_node.data.max_health
 		bar.value = u_node.data.health
 		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		bar.mouse_filter = Control.MOUSE_FILTER_STOP
-		bar.tooltip_text = "Open inventory"
-		bar.gui_input.connect(func(event: InputEvent):
-			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-				show_char_inv_panel(u_node)
-				get_viewport().set_input_as_handled()
-		)
+		bar.mouse_filter = Control.MOUSE_FILTER_PASS
 		col.add_child(bar)
 
 		row.add_child(col)
@@ -667,8 +708,21 @@ func _refresh_units_panel() -> void:
 				slot.set_item(items_list[i], u_node.data.inventory[items_list[i]])
 			inv_grid.add_child(slot)
 		row.add_child(inv_grid)
+		card_vbox.add_child(row)
 
-		card.add_child(row)
+		# "View Profile" button — opens char inv and closes units panel
+		var profile_btn := Button.new()
+		profile_btn.text = "View Profile"
+		profile_btn.flat = false
+		profile_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		profile_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+		profile_btn.pressed.connect(func():
+			_units_panel.visible = false
+			show_char_inv_panel(u_node)
+		)
+		card_vbox.add_child(profile_btn)
+
+		card.add_child(card_vbox)
 		_units_vbox.add_child(card)
 		_units_vbox.add_child(HSeparator.new())
 
@@ -942,21 +996,33 @@ func _build_char_inv_panel() -> PanelContainer:
 func _build_loot_panel() -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.visible = false
+	# Free-floating: no anchors, positioned by show_loot_panel
 	panel.anchor_left   = 0.0
-	panel.anchor_top    = 1.0
+	panel.anchor_top    = 0.0
 	panel.anchor_right  = 0.0
-	panel.anchor_bottom = 1.0
-	panel.offset_left   = 710
-	panel.offset_right  = 1070
-	panel.offset_bottom = -44
-	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	panel.anchor_bottom = 0.0
+	panel.custom_minimum_size = Vector2(360, 0)
 
 	var vbox := VBoxContainer.new()
 
 	var header := HBoxContainer.new()
+	header.custom_minimum_size = Vector2(0, 28)
+	# Drag logic on the header
+	var drag_state := [false, Vector2.ZERO]  # [dragging, offset]
+	header.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			drag_state[0] = event.pressed
+			if drag_state[0]:
+				drag_state[1] = panel.global_position - event.global_position
+			header.get_viewport().set_input_as_handled()
+		elif event is InputEventMouseMotion and drag_state[0]:
+			panel.global_position = event.global_position + drag_state[1]
+			header.get_viewport().set_input_as_handled()
+	)
 	_loot_title_lbl = Label.new()
 	_loot_title_lbl.text = "Loot"
 	_loot_title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_loot_title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	header.add_child(_loot_title_lbl)
 	var close_btn := Button.new()
 	close_btn.text = "×"
@@ -970,6 +1036,11 @@ func _build_loot_panel() -> PanelContainer:
 	_loot_grid.columns = 5
 	_loot_grid.add_theme_constant_override("h_separation", 2)
 	_loot_grid.add_theme_constant_override("v_separation", 2)
+	_loot_drop_slots.clear()
+	for i in 10:
+		var slot := _LootDropSlot.new(self)
+		_loot_grid.add_child(slot)
+		_loot_drop_slots.append(slot)
 	vbox.add_child(_loot_grid)
 
 	vbox.add_child(HSeparator.new())
@@ -1013,21 +1084,20 @@ func show_loot_panel(title: String, source_inv: Dictionary, source_pos: Vector2)
 	_loot_source_inv = source_inv
 	_loot_source_pos = source_pos
 	_refresh_loot_panel()
+	# Position next to character inventory panel on first open (can be dragged after)
+	var vp := get_viewport().get_visible_rect().size
+	_loot_panel.position = Vector2(710, vp.y - 44 - _loot_panel.size.y)
 	_loot_panel.visible = true
 
 
 func _refresh_loot_panel() -> void:
-	for child in _loot_grid.get_children():
-		child.queue_free()
-	if _loot_source_inv.is_empty():
-		var lbl := Label.new()
-		lbl.text = "(empty)"
-		_loot_grid.add_child(lbl)
-		return
-	for item: String in _loot_source_inv:
-		var qty: int = _loot_source_inv[item]
-		var slot := _LootSlot.new(item, qty, _loot_source_inv, self)
-		_loot_grid.add_child(slot)
+	var items := _loot_source_inv.keys()
+	for i in _loot_drop_slots.size():
+		var slot := _loot_drop_slots[i] as _LootDropSlot
+		if i < items.size():
+			slot.set_item(items[i], _loot_source_inv[items[i]])
+		else:
+			slot.clear_item()
 
 
 func _on_unit_inv_btn_pressed() -> void:
@@ -1355,6 +1425,12 @@ class _InvDropSlot extends PanelContainer:
 		_icon.texture = null
 		_qty_lbl.visible = false
 
+	func _get_drag_data(_at: Vector2) -> Variant:
+		if _item_name == "" or _gui_ref == null:
+			return null
+		set_drag_preview(_gui_ref._make_drag_preview(_item_name, _count))
+		return {"item": _item_name, "count": _count, "from_char_inv": true}
+
 	func _can_drop_data(_at: Vector2, data: Variant) -> bool:
 		return data is Dictionary and data.has("item") and data.has("source_inv")
 
@@ -1434,3 +1510,220 @@ class _UnitInvSlot extends PanelContainer:
 		_unit.data.inventory[item] = _unit.data.inventory.get(item, 0) + count
 		if _gui_ref != null:
 			_gui_ref._refresh_units_panel()
+
+
+# ── Minimap ───────────────────────────────────────────────────────────────────
+
+class _MinimapControl extends Control:
+	var _grid_ref
+	var _camera_ref
+	var _units_ref: Array
+	var _main_node
+	var _terrain_colors: Dictionary = {}
+	var _map_img: Image
+	var _map_tex: ImageTexture
+
+	func _init(g, c, units: Array) -> void:
+		_grid_ref = g
+		_camera_ref = c
+		_units_ref = units
+		mouse_filter = MOUSE_FILTER_STOP
+
+	func _ready() -> void:
+		_main_node = get_tree().root.get_node("Main")
+		_precompute_terrain()
+		_map_img = Image.create(_grid_ref.width, _grid_ref.height, false, Image.FORMAT_RGBA8)
+		_map_tex = ImageTexture.create_from_image(_map_img)
+
+	func _precompute_terrain() -> void:
+		for pos in _grid_ref.grid:
+			var cell = _grid_ref.grid[pos]
+			var col: Color
+			if _grid_ref.water_tiles.has(pos):
+				col = Color(0.15, 0.38, 0.72)
+			elif _grid_ref.dirt_tiles.has(pos):
+				col = Color(0.42, 0.29, 0.16)
+			elif not cell.navigable:
+				col = Color(0.38, 0.38, 0.40)
+			else:
+				col = Color(0.18, 0.36, 0.18)
+			_terrain_colors[pos] = col
+
+	func _get_tooltip(at_position: Vector2) -> String:
+		var mm := size
+		var world_w: float = _grid_ref.width  * float(_grid_ref.cell_size)
+		var world_h: float = _grid_ref.height * float(_grid_ref.cell_size)
+		var ship_pos: Vector2 = _grid_ref.crash_site_pos
+		if ship_pos != Vector2(-1, -1):
+			var ship_world: Vector2 = _grid_ref.gridToWorld(ship_pos) + Vector2(_grid_ref.cell_size, _grid_ref.cell_size) * 2.0
+			var sx: float = (ship_world.x / world_w) * mm.x
+			var sy: float = (ship_world.y / world_h) * mm.y
+			if at_position.distance_to(Vector2(sx, sy)) <= 8.0:
+				return "Crashed Ship"
+		return ""
+
+	func _gui_input(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			var mm := size
+			var world_w: float = _grid_ref.width  * float(_grid_ref.cell_size)
+			var world_h: float = _grid_ref.height * float(_grid_ref.cell_size)
+			var world_pos := Vector2(
+				(event.position.x / mm.x) * world_w,
+				(event.position.y / mm.y) * world_h
+			)
+			_camera_ref.center_on(world_pos)
+			accept_event()
+
+	func _process(_delta: float) -> void:
+		_rebuild_map()
+		queue_redraw()
+
+	func _rebuild_map() -> void:
+		if _main_node == null or _map_img == null:
+			return
+		var explored_img: Image = _main_node._explored_img
+		var visible_cells: Dictionary = _main_node._visible_cells
+		if explored_img == null:
+			return
+		var w: int = _grid_ref.width
+		var h: int = _grid_ref.height
+		for pos in _grid_ref.grid:
+			var px: int = int(pos.x)
+			var py: int = int(pos.y)
+			if px < 0 or py < 0 or px >= w or py >= h:
+				continue
+			var lit: bool = visible_cells.has(Vector2i(px, py))
+			var explored: bool = explored_img.get_pixel(px, py).r > 0.5
+			var base: Color = _terrain_colors.get(pos, Color(0.1, 0.1, 0.1))
+			var col: Color
+			if lit:
+				col = base
+			elif explored:
+				col = base.darkened(0.55)
+			else:
+				col = Color(0.04, 0.04, 0.06)
+			_map_img.set_pixel(px, py, col)
+		_map_tex.update(_map_img)
+
+	func _draw() -> void:
+		var mm := size
+		draw_rect(Rect2(Vector2.ZERO, mm), Color(0.04, 0.04, 0.06))
+		if _map_tex:
+			draw_texture_rect(_map_tex, Rect2(Vector2.ZERO, mm), false)
+
+		var world_w: float = _grid_ref.width  * float(_grid_ref.cell_size)
+		var world_h: float = _grid_ref.height * float(_grid_ref.cell_size)
+
+		# Crash site landmark (red square)
+		var ship_pos: Vector2 = _grid_ref.crash_site_pos
+		if ship_pos != Vector2(-1, -1):
+			var ship_world: Vector2 = _grid_ref.gridToWorld(ship_pos) + Vector2(_grid_ref.cell_size, _grid_ref.cell_size) * 2.0
+			var sx: float = (ship_world.x / world_w) * mm.x
+			var sy: float = (ship_world.y / world_h) * mm.y
+			draw_rect(Rect2(sx - 4, sy - 4, 8, 8), Color(0.9, 0.15, 0.15, 0.9))
+			draw_rect(Rect2(sx - 4, sy - 4, 8, 8), Color(1.0, 0.5, 0.5, 1.0), false, 1.0)
+
+		# Unit glows + dots
+		for u in _units_ref:
+			if not is_instance_valid(u):
+				continue
+			var wp: Vector2 = u.position
+			var mx: float = (wp.x / world_w) * mm.x
+			var my: float = (wp.y / world_h) * mm.y
+			draw_circle(Vector2(mx, my), 7.0, Color(1.0, 0.88, 0.55, 0.12))
+			draw_circle(Vector2(mx, my), 4.5, Color(1.0, 0.88, 0.55, 0.20))
+			draw_circle(Vector2(mx, my), 2.5, Color(0.35, 0.92, 1.0, 1.0))
+
+		# Viewport rectangle — clipped to minimap bounds
+		var vp_size: Vector2 = _camera_ref.get_viewport().get_visible_rect().size / _camera_ref.zoom
+		var cam_tl: Vector2  = _camera_ref.global_position - vp_size * 0.5
+		var rx: float = (cam_tl.x / world_w) * mm.x
+		var ry: float = (cam_tl.y / world_h) * mm.y
+		var rw: float = (vp_size.x  / world_w) * mm.x
+		var rh: float = (vp_size.y  / world_h) * mm.y
+		var vp_rect := Rect2(rx, ry, rw, rh)
+		var mm_rect := Rect2(Vector2.ZERO, mm)
+		var clipped := mm_rect.intersection(vp_rect)
+		if clipped.size.x > 0 and clipped.size.y > 0:
+			draw_rect(clipped, Color(1, 1, 1, 0.75), false, 0.5)
+
+
+# ── Loot drop slot (source inventory — drag out AND accept drops back) ────────
+
+class _LootDropSlot extends PanelContainer:
+	var _gui_ref
+	var _item_name: String = ""
+	var _count: int = 0
+	var _icon: TextureRect
+	var _qty_lbl: Label
+
+	func _init(gui_node) -> void:
+		_gui_ref = gui_node
+		custom_minimum_size = Vector2(52, 52)
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0, 0, 0, 0)
+		style.border_width_left = 1
+		style.border_width_right = 1
+		style.border_width_top = 1
+		style.border_width_bottom = 1
+		style.border_color = Color(1, 1, 1, 0.2)
+		add_theme_stylebox_override("panel", style)
+
+		var overlay := Control.new()
+		overlay.mouse_filter = MOUSE_FILTER_IGNORE
+
+		_icon = TextureRect.new()
+		_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		_icon.mouse_filter = MOUSE_FILTER_IGNORE
+		overlay.add_child(_icon)
+
+		_qty_lbl = Label.new()
+		_qty_lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_qty_lbl.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+		_qty_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_qty_lbl.visible = false
+		_qty_lbl.mouse_filter = MOUSE_FILTER_IGNORE
+		overlay.add_child(_qty_lbl)
+		add_child(overlay)
+
+	func set_item(item: String, count: int) -> void:
+		_item_name = item
+		_count = count
+		tooltip_text = "%s ×%d" % [item, count]
+		if _gui_ref != null:
+			_icon.texture = _gui_ref._get_item_icon(item)
+		_qty_lbl.text = "×%d" % count
+		_qty_lbl.visible = true
+
+	func clear_item() -> void:
+		_item_name = ""
+		_count = 0
+		tooltip_text = ""
+		_icon.texture = null
+		_qty_lbl.visible = false
+
+	func _get_drag_data(_at: Vector2) -> Variant:
+		if _item_name == "" or _gui_ref == null:
+			return null
+		set_drag_preview(_gui_ref._make_drag_preview(_item_name, _count))
+		return {"item": _item_name, "count": _count, "source_inv": _gui_ref._loot_source_inv}
+
+	func _can_drop_data(_at: Vector2, data: Variant) -> bool:
+		return data is Dictionary and data.has("item") and data.has("from_char_inv")
+
+	func _drop_data(_at: Vector2, data: Variant) -> void:
+		if _gui_ref == null:
+			return
+		var item: String = data["item"]
+		var count: int = data["count"]
+		var unit: Unit = _gui_ref._char_inv_unit
+		if unit == null:
+			return
+		unit.data.inventory[item] -= count
+		if unit.data.inventory[item] <= 0:
+			unit.data.inventory.erase(item)
+		_gui_ref._loot_source_inv[item] = _gui_ref._loot_source_inv.get(item, 0) + count
+		_gui_ref._refresh_loot_panel()
+		_gui_ref._refresh_char_inv_panel()

@@ -39,6 +39,17 @@ var _is_walking_down: bool = false
 var _walk_flip_h: bool = false
 var _walk_idle_frame_side: int = 34
 var _walk_idle_frame_down: int = 0
+
+var _attack_frames_side: Array = []
+var _attack_frames_down: Array = []
+var _is_attacking: bool = false
+var _attack_dir: String = "side"  # "side" or "down"
+var _attack_down_hold: bool = false  # stay on last down-attack frame until next move
+var _attack_frame_idx: int = 0
+var _attack_frame_timer: float = 0.0
+var attack_fps_side: float = 48.0
+var attack_fps_down: float = 48.0
+const ATTACK_DOWN_TOP_OFFSET: int = 180  # sprite pixels from top to tile-top edge
 var _walk_loop_start_up: int = 0
 var _walk_loop_start_down: int = 0
 var _walk_up_initial_frame: int = 0
@@ -225,6 +236,89 @@ func _tick_bubble(delta: float) -> void:
 	queue_redraw()
 
 
+func set_attack_frames_side(frames: Array) -> void:
+	_attack_frames_side = frames
+
+
+func set_attack_frames_down(frames: Array) -> void:
+	_attack_frames_down = frames
+
+
+func trigger_attack() -> void:
+	if _is_attacking:
+		return
+	# Pick direction based on current facing
+	var facing_down: bool = abs(_move_dir.y) >= abs(_move_dir.x) and _move_dir.y >= 0.0
+	if facing_down and not _attack_frames_down.is_empty():
+		_attack_dir = "down"
+		_is_attacking = true
+		_attack_frame_idx = 0
+		_attack_frame_timer = 0.0
+		_apply_sprite_attack_down(_attack_frames_down[0])
+	elif not _attack_frames_side.is_empty():
+		_attack_dir = "side"
+		_is_attacking = true
+		_attack_frame_idx = 0
+		_attack_frame_timer = 0.0
+		_apply_sprite_attack_side(_attack_frames_side[0], _walk_flip_h)
+
+
+# Sideways attack: scale by height = cell_size, width overflows left/right.
+func _apply_sprite_attack_side(tex: Texture2D, flip_h: bool) -> void:
+	var sprite := get_node("Sprite2D") as Sprite2D
+	sprite.texture = tex
+	sprite.flip_h = flip_h
+	sprite.flip_v = false
+	var s := float(grid.cell_size) / float(tex.get_height())
+	sprite.scale = Vector2(s, s)
+	var scaled_w := s * tex.get_width()
+	sprite.position = Vector2(-scaled_w * 0.5, -grid.cell_size)
+
+
+# Downward attack: scale so the sprite bottom touches the tile bottom (feet)
+# AND ATTACK_DOWN_TOP_OFFSET source-pixels overflow above the tile top.
+# Total world height needed = cell_size + overflow_world
+# where overflow_world = ATTACK_DOWN_TOP_OFFSET * s, and s = total_world_h / tex_h
+# Solving: s = cell_size / (tex_h - ATTACK_DOWN_TOP_OFFSET)
+func _apply_sprite_attack_down(tex: Texture2D) -> void:
+	var sprite := get_node("Sprite2D") as Sprite2D
+	sprite.texture = tex
+	sprite.flip_h = false
+	sprite.flip_v = false
+	var s := float(grid.cell_size) / float(tex.get_height() - ATTACK_DOWN_TOP_OFFSET)
+	sprite.scale = Vector2(s, s)
+	var scaled_w := s * tex.get_width()
+	var scaled_h := s * float(tex.get_height())
+	# bottom of sprite at feet (y=0), top overflows upward
+	sprite.position = Vector2(-scaled_w * 0.5, -scaled_h)
+
+
+func _tick_attack_anim(delta: float) -> void:
+	if not _is_attacking:
+		return
+	var frames: Array = _attack_frames_down if _attack_dir == "down" else _attack_frames_side
+	var fps: float    = attack_fps_down     if _attack_dir == "down" else attack_fps_side
+	if frames.is_empty():
+		_is_attacking = false
+		return
+	_attack_frame_timer += delta
+	while _attack_frame_timer >= 1.0 / fps:
+		_attack_frame_timer -= 1.0 / fps
+		_attack_frame_idx += 1
+		if _attack_frame_idx >= frames.size():
+			_is_attacking = false
+			if _attack_dir == "down":
+				_attack_down_hold = true
+				_apply_sprite_attack_down(frames[frames.size() - 1])
+			else:
+				_apply_sprite(_walk_frames_side[_walk_idle_frame_side] if _walk_frames_side.size() > _walk_idle_frame_side else _tex_side, _walk_flip_h)
+			return
+	if _attack_dir == "down":
+		_apply_sprite_attack_down(frames[_attack_frame_idx])
+	else:
+		_apply_sprite_attack_side(frames[_attack_frame_idx], _walk_flip_h)
+
+
 func set_walk_frames_side(frames: Array) -> void:
 	_walk_frames_side = frames
 	_walk_frame_idx = 0
@@ -311,6 +405,7 @@ func _process(delta: float) -> void:
 	_tick_separation(delta)
 	_tick_obstacle_clearance()
 	_tick_stuck_check(delta)
+	_tick_attack_anim(delta)
 	_tick_walk_anim(delta)
 	_tick_gather(delta)
 	_tick_build(delta)
@@ -391,6 +486,8 @@ func _tick_idle_speech(delta: float) -> void:
 
 
 func _tick_walk_anim(delta: float) -> void:
+	if _is_attacking:
+		return
 	if not _is_walking_side and not _is_walking_up and not _is_walking_down:
 		return
 	var frames: Array
@@ -493,6 +590,7 @@ func move(delta: float) -> void:
 					var was_walking := _is_walking_side or _is_walking_up
 					_walk_frame_idx = _walk_loop_start_down if was_walking else _walk_down_initial_frame
 					_walk_frame_timer = 0.0
+					_attack_down_hold = false
 				_is_walking_side = false
 				_is_walking_up = false
 				_is_walking_down = true
@@ -516,8 +614,9 @@ func move(delta: float) -> void:
 				_apply_sprite(_walk_frames_up[0], false)
 			_walk_frame_idx = 0
 		elif _is_walking_down:
-			if _walk_frames_down.size() > _walk_idle_frame_down:
-				_apply_sprite(_walk_frames_down[_walk_idle_frame_down], false)
+			if not _attack_down_hold:
+				if _walk_frames_down.size() > _walk_idle_frame_down:
+					_apply_sprite(_walk_frames_down[_walk_idle_frame_down], false)
 			_walk_frame_idx = 0
 		_is_walking_side = false
 		_is_walking_up = false

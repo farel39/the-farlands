@@ -388,6 +388,16 @@ func _spawn_units() -> void:
 		$Units.add_child(u)
 		units_to_setup.append(u)
 
+	# Preload engineer attack frames
+	var engineer_attack_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the engineer attacking animation sideway frames/frame_%04d.png" % i
+		engineer_attack_frames.append(load(frame_path) as Texture2D)
+	var engineer_attack_down_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the engineer attacking animation downward frames/frame_%04d.png" % i
+		engineer_attack_down_frames.append(load(frame_path) as Texture2D)
+
 	# Preload engineer walk frames
 	var engineer_walk_frames: Array = []
 	for i in range(1, 49):
@@ -446,6 +456,8 @@ func _spawn_units() -> void:
 			u.set_walk_frames_side(engineer_walk_frames)
 			u.set_walk_frames_up(engineer_walk_up_frames)
 			u.set_walk_frames_down(engineer_walk_down_frames)
+			u.set_attack_frames_side(engineer_attack_frames)
+			u.set_attack_frames_down(engineer_attack_down_frames)
 			u._walk_loop_start_up = 16
 			u._walk_loop_start_down = 29
 		elif c["name"] == "Mira":
@@ -486,6 +498,11 @@ func _spawn_units() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_A:
+			if selected_units.size() == 1 and (selected_units[0] as Unit).drafted:
+				(selected_units[0] as Unit).trigger_attack()
+			get_viewport().set_input_as_handled()
+			return
 		if event.keycode == KEY_R:
 			for u in selected_units:
 				u.set_drafted(not u.drafted)
