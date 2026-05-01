@@ -328,7 +328,14 @@ func _ready() -> void:
 	# small "Debug" toggle in the top-right corner. The top-left corner
 	# is reserved for the game's main HUD (wave banner + disturbance bar
 	# + quest objective).
-	_build_debug_dropdown()
+	# Gated on OS.is_debug_build(): true in the editor + debug exports
+	# (so QA / playtests still get the cheats), false in release exports
+	# (so a shipped .exe doesn't expose Free Mats / Invincible to
+	# regular players). Test Event panel is built unconditionally
+	# because the debug dropdown is the only thing that opens it — if
+	# the dropdown isn't present, the panel is unreachable anyway.
+	if OS.is_debug_build():
+		_build_debug_dropdown()
 	_test_event_panel = _build_test_event_panel()
 	add_child(_test_event_panel)
 
