@@ -46,9 +46,10 @@ func connectPoint(_point: Vector2):
 		if direction.x != 0 and direction.y != 0:
 			var c1 = _point + Vector2(direction.x, 0)
 			var c2 = _point + Vector2(0, direction.y)
-			# Only block diagonal if BOTH corners are blocked (truly impassable corner).
-			# A single blocked corner is a grazeable edge — allow it.
-			if (grid.nav_grid.has(c1) and not grid.nav_grid[c1]) and \
+			# Block diagonal if EITHER corner is blocked. Stricter than the
+			# old "both blocked" rule — prevents units from cutting diagonally
+			# past the corner of a wall (which was visually clipping them).
+			if (grid.nav_grid.has(c1) and not grid.nav_grid[c1]) or \
 			   (grid.nav_grid.has(c2) and not grid.nav_grid[c2]):
 				continue
 		aStar.connect_points(_pointID, _pid(neighbor))
@@ -105,7 +106,9 @@ func _refresh_corner_diagonals(pos: Vector2) -> void:
 		var other: Vector2 = c2 if c1 == pos else c1
 		var pos_blocked: bool = grid.nav_grid.has(pos) and not grid.nav_grid[pos]
 		var other_blocked: bool = grid.nav_grid.has(other) and not grid.nav_grid[other]
-		if pos_blocked and other_blocked:
+		# OR rule: a single blocked corner is enough to break the diagonal,
+		# matching connectPoint() above.
+		if pos_blocked or other_blocked:
 			aStar.disconnect_points(aID, bID)
 		else:
 			aStar.connect_points(aID, bID)
@@ -140,7 +143,11 @@ func smoothPath(world_path: PackedVector2Array) -> PackedVector2Array:
 func tightenPath(world_path: PackedVector2Array) -> PackedVector2Array:
 	if world_path.size() <= 2:
 		return world_path
-	const CLEARANCE := 18.0
+	# Distance the tightened path keeps from a hugged wall corner. Set above
+	# half a unit's body width so the rendered sprite doesn't visually clip
+	# into the wall when the path wraps around a corner. Unit bodies are
+	# ~50-90 px depending on character; 40 px gives ~5-15 px of breathing room.
+	const CLEARANCE := 40.0
 	var ns := float(Grid.NAV_CELL_SIZE)
 	var result := PackedVector2Array()
 	result.append(world_path[0])
@@ -227,11 +234,12 @@ func _hasLOS(a: Vector2, b: Vector2) -> bool:
 		var t1: int = (1 + 2 * ix) * ny
 		var t2: int = (1 + 2 * iy) * nx
 		if t1 == t2:
-			# Line grazes the corner between two cells.
-			# Only impassable when BOTH cells are blocked.
+			# Line grazes the corner between two cells. Impassable when EITHER
+			# adjacent cell is blocked — matches the OR rule used by
+			# connectPoint() so smoothing can't shortcut past wall corners.
 			var c1 := Vector2(x + sx, y)
 			var c2 := Vector2(x, y + sy)
-			if (grid.nav_grid.has(c1) and not grid.nav_grid[c1]) and \
+			if (grid.nav_grid.has(c1) and not grid.nav_grid[c1]) or \
 			   (grid.nav_grid.has(c2) and not grid.nav_grid[c2]):
 				return false
 			x += sx;  y += sy;  ix += 1;  iy += 1

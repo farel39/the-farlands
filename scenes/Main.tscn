@@ -6,10 +6,7 @@
 [ext_resource type="Texture2D" uid="uid://v7e8imimj5dw" path="res://art/environment/grass.png" id="3_krkin"]
 [ext_resource type="Script" uid="uid://bgtxtdf4nsyei" path="res://scripts/systems/Camera.gd" id="3_pkilc"]
 [ext_resource type="Script" uid="uid://cuuf16dly0s6y" path="res://scripts/systems/Pathfinding.gd" id="4_q8kdv"]
-[ext_resource type="Texture2D" uid="uid://cssepkn7tv6tj" path="res://art/missing.png" id="4_yxg74"]
-[ext_resource type="Texture2D" uid="uid://cn2qprvdaisp1" path="res://art/buildings/stonewall.png" id="5_gqpea"]
 [ext_resource type="Texture2D" uid="uid://clrt5fxjh8ada" path="res://art/environment/sand.png" id="7_bjd11"]
-[ext_resource type="Texture2D" uid="uid://d3f15xsj1174g" path="res://art/buildings/woodwall.png" id="10_krkin"]
 [ext_resource type="Texture2D" uid="uid://xv0es08wjdde" path="res://art/environment/alien dirt.png" id="11_adirt"]
 [ext_resource type="Texture2D" uid="uid://dd1qkhimov3l1" path="res://art/environment/alien dirt 3.png" id="12_adirt3"]
 [ext_resource type="Script" uid="uid://dcnsnwm7bloko" path="res://scripts/ui/GUI.gd" id="12_guisc"]
@@ -23,21 +20,6 @@ texture_region_size = Vector2i(128, 128)
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_vup2a"]
 texture = ExtResource("3_krkin")
-texture_region_size = Vector2i(128, 128)
-0:0/0 = 0
-
-[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_p7wog"]
-texture = ExtResource("4_yxg74")
-texture_region_size = Vector2i(128, 128)
-0:0/0 = 0
-
-[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_0cfwy"]
-texture = ExtResource("5_gqpea")
-texture_region_size = Vector2i(128, 128)
-0:0/0 = 0
-
-[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_wood"]
-texture = ExtResource("10_krkin")
 texture_region_size = Vector2i(128, 128)
 0:0/0 = 0
 
@@ -71,9 +53,6 @@ texture_region_size = Vector2i(128, 128)
 tile_size = Vector2i(128, 128)
 sources/0 = SubResource("TileSetAtlasSource_1jtt4")
 sources/1 = SubResource("TileSetAtlasSource_vup2a")
-sources/2 = SubResource("TileSetAtlasSource_p7wog")
-sources/3 = SubResource("TileSetAtlasSource_0cfwy")
-sources/4 = SubResource("TileSetAtlasSource_wood")
 sources/5 = SubResource("TileSetAtlasSource_qmy6f")
 sources/6 = SubResource("TileSetAtlasSource_adirt")
 sources/7 = SubResource("TileSetAtlasSource_adirt3")

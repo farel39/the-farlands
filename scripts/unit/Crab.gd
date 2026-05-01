@@ -11,7 +11,8 @@ var _sprite: Sprite2D
 var _idle_timer: float = 0.0
 var _idle_duration: float = 0.0
 var _path: Array = []   # Array of world Vector2
-const SPEED: float = 60.0  # pixels per second
+# Movement speed in pixels per second. Per-creature override via setup() def.
+var speed: float = 60.0
 
 # Shore band: y range to stay within
 var shore_y_min: int = 0
@@ -19,28 +20,203 @@ var shore_y_max: int = 0
 
 var _rng := RandomNumberGenerator.new()
 
+# Combat
+var hp: int = 30
+var max_hp: int = 30
+var _hit_flash_t: float = 0.0
+const HIT_FLASH_DURATION := 0.18
 
-func setup(down: Texture2D, side: Texture2D, g: Grid) -> void:
+# Set true for wave-spawned crabs: they actively hunt the nearest unit instead
+# of merely retaliating. Default false → original wandering / reactive crab.
+var aggressive: bool = false
+
+# Retaliation AI: aggro is set when the crab is damaged, then it chases &
+# attacks the attacker until they die or escape AGGRO_LOSE range.
+var aggro_target: Node = null
+const AGGRO_LOSE_TILES: float = 8.0
+# Per-creature combat stats (var so setup() can override per def).
+var attack_range_tiles: float = 0.9
+var attack_cooldown_max: float = 1.4
+var attack_damage: int = 5
+# Lunge animation timing — visual only, kept const since all creatures share it.
+const LUNGE_DURATION: float = 0.32
+const LUNGE_DISTANCE_TILES: float = 0.45
+# True when tex_down faces NORTH (default for "facing up" sprites). The sprite
+# flips vertically when the creature moves south so it leads with its eyes.
+# False for sprites that already face south (e.g., tide crawler).
+var flip_v_south: bool = true
+# Multiplier on the default 1-cell sprite width. Boss creatures (Brood Mother)
+# render at 3.0 so they visually dominate. Default 1.0 keeps every other
+# creature exactly as before.
+var render_scale: float = 1.0
+# Per-creature loot table — copied from the def in setup(). On death each entry
+# rolls independently against `chance`, then randi_range(min,max) for the count.
+# Empty array = no drops (default for ambient peacetime spawns without a def).
+var _drops: Array = []
+var _attack_cooldown: float = 0.0
+var _is_attacking: bool = false
+var _attack_t: float = 0.0
+var _attack_dir_vec: Vector2 = Vector2.RIGHT
+var _hit_landed: bool = false
+# Set when the current lunge is targeting a wall cell rather than the aggro
+# target unit. Cleared when the lunge finishes. _apply_combat_hit reads this
+# to route damage to grid.damage_wall_at instead of the unit.
+var _wall_target_cell: Vector2 = Vector2(-1e9, -1e9)
+const _NO_WALL_TARGET: Vector2 = Vector2(-1e9, -1e9)
+
+
+func setup(down: Texture2D, side: Texture2D, g: Grid, def: Dictionary = {}) -> void:
 	grid = g
 	_tex_down = down
 	_tex_side = side
+	# Per-creature stat overrides from CreatureDefs. Empty def = keep defaults
+	# (which match the alien crab — used by ambient peacetime spawns).
+	if not def.is_empty():
+		max_hp = int(def.get("hp", max_hp))
+		hp = max_hp
+		speed = float(def.get("speed", speed))
+		attack_damage = int(def.get("attack_damage", attack_damage))
+		attack_cooldown_max = float(def.get("attack_cooldown", attack_cooldown_max))
+		attack_range_tiles = float(def.get("attack_range_tiles", attack_range_tiles))
+		flip_v_south = bool(def.get("flip_v_south", flip_v_south))
+		render_scale = float(def.get("render_scale", render_scale))
+		_drops = def.get("drops", [])
 	_rng.randomize()
 	_idle_duration = _rng.randf_range(0.5, 2.5)
 	_apply_sprite(down, false)
 
 
-func _apply_sprite(tex: Texture2D, flip: bool) -> void:
+func is_dead() -> bool:
+	return hp <= 0
+
+
+func take_damage(amount: int, attacker: Node = null) -> void:
+	if hp <= 0:
+		return
+	hp -= amount
+	_hit_flash_t = HIT_FLASH_DURATION
+	if attacker != null and is_instance_valid(attacker):
+		aggro_target = attacker
+	if hp <= 0:
+		_drop_loot()
+		# Tick the run kill counter (drop-aware so peacetime ambient crabs
+		# without a drops table still count toward the summary).
+		var main_n: Node = get_tree().root.get_node_or_null("Main")
+		if main_n != null and main_n.has_method("record_kill"):
+			main_n.record_kill()
+		queue_free()
+
+
+# Roll the loot table, deposit items into the closest live (non-downed) unit,
+# and tell the GUI to show floating "+N item" toasts above the corpse. Silent
+# no-op when the def carries no drops (peacetime ambient crabs).
+func _drop_loot() -> void:
+	if _drops.is_empty():
+		return
+	var rolled: Dictionary = {}
+	for entry in _drops:
+		var chance: float = float(entry.get("chance", 1.0))
+		if _rng.randf() > chance:
+			continue
+		var lo: int = int(entry.get("min", 1))
+		var hi: int = int(entry.get("max", lo))
+		var amt: int = _rng.randi_range(lo, hi)
+		if amt <= 0:
+			continue
+		var item_name: String = entry.get("item", "")
+		if item_name == "":
+			continue
+		rolled[item_name] = int(rolled.get(item_name, 0)) + amt
+	if rolled.is_empty():
+		return
+	var recipient: Node = _find_nearest_live_unit()
+	if recipient != null:
+		for item_name: String in rolled.keys():
+			recipient.data.inventory[item_name] = int(recipient.data.inventory.get(item_name, 0)) + int(rolled[item_name])
+	# Toast even if there's no recipient — drops are still acknowledged
+	# visually so the player knows a kill paid out (in practice there's
+	# always at least one live unit on screen during a wave).
+	var gui: Node = get_tree().root.get_node_or_null("Main/CanvasLayer/GUI")
+	if gui != null and gui.has_method("notify_loot_batch"):
+		var crab_center: Vector2 = position + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+		gui.notify_loot_batch(crab_center, rolled)
+	# Wake up any deferred build tasks that were waiting on materials.
+	var main: Node = get_tree().root.get_node_or_null("Main")
+	if main != null and main.has_method("notify_inventory_changed"):
+		main.notify_inventory_changed()
+
+
+func _find_nearest_live_unit() -> Node:
+	var best: Node = null
+	var best_d: float = INF
+	for u in get_tree().get_nodes_in_group("units"):
+		if not is_instance_valid(u):
+			continue
+		if u.has_method("is_dead") and u.is_dead():
+			continue
+		if "is_downed" in u and u.is_downed:
+			continue
+		var d: float = position.distance_to(u.global_position)
+		if d < best_d:
+			best_d = d
+			best = u
+	return best
+
+
+func _apply_sprite(tex: Texture2D, flip_h: bool, flip_v: bool = false) -> void:
 	_sprite = get_node_or_null("Sprite2D")
 	if _sprite == null:
 		return
 	_sprite.texture = tex
-	_sprite.flip_h = flip
-	var s := float(grid.cell_size) / float(tex.get_width())
+	_sprite.flip_h = flip_h
+	_sprite.flip_v = flip_v
+	# Default scaling fits the texture into a 1-cell-wide footprint. Boss
+	# creatures bump render_scale (e.g., 3.0 for the Brood Mother) so they
+	# visually dominate the area without changing collision math.
+	var s := float(grid.cell_size) / float(tex.get_width()) * render_scale
 	_sprite.scale = Vector2(s, s)
 
 
 func _process(delta: float) -> void:
 	z_index = int(position.y / float(grid.cell_size)) + 1
+	if _hit_flash_t > 0.0:
+		_hit_flash_t -= delta
+		var s := get_node_or_null("Sprite2D") as Sprite2D
+		if s:
+			var k: float = clamp(_hit_flash_t / HIT_FLASH_DURATION, 0.0, 1.0)
+			s.modulate = Color(1.0, lerp(1.0, 0.3, k), lerp(1.0, 0.3, k), 1.0)
+			if _hit_flash_t <= 0.0:
+				s.modulate = Color(1, 1, 1, 1)
+
+	if _attack_cooldown > 0.0:
+		_attack_cooldown -= delta
+
+	# Mid-lunge: position the sprite along the lunge curve and pause AI.
+	if _is_attacking:
+		_tick_attack(delta)
+		return
+
+	# Drop dead/escaped aggro
+	if aggro_target != null:
+		if not is_instance_valid(aggro_target):
+			aggro_target = null
+		elif aggro_target.has_method("is_dead") and aggro_target.is_dead():
+			aggro_target = null
+		elif position.distance_to(aggro_target.global_position) > AGGRO_LOSE_TILES * float(grid.cell_size):
+			aggro_target = null
+
+	# Wave-spawned (aggressive) crabs proactively hunt the nearest live unit.
+	# Plain wandering crabs only set aggro_target through retaliation in
+	# take_damage(), so this branch is a no-op for them.
+	if aggressive and aggro_target == null:
+		aggro_target = _find_nearest_unit()
+
+	if aggro_target != null:
+		_path.clear()
+		_idle_timer = 0.0
+		_tick_combat(delta)
+		return
+
 	if not _path.is_empty():
 		_walk(delta)
 	else:
@@ -51,17 +227,132 @@ func _process(delta: float) -> void:
 			_pick_new_target()
 
 
+# Scan the "units" group for the closest living target. Group registration
+# happens in Unit._ready(). Returns null when there are no candidates.
+func _find_nearest_unit() -> Node:
+	var nearest: Node = null
+	var best_d: float = INF
+	for u in get_tree().get_nodes_in_group("units"):
+		if not is_instance_valid(u):
+			continue
+		if u.has_method("is_dead") and u.is_dead():
+			continue
+		var d: float = position.distance_to(u.global_position)
+		if d < best_d:
+			best_d = d
+			nearest = u
+	return nearest
+
+
+func _tick_combat(delta: float) -> void:
+	# Distance must compare visual-body centers, not anchor points. Crab anchor
+	# is its sprite's top-left (centered=false) so its body center is a half-cell
+	# down-right of `position`. Unit anchor is its feet so its body center is a
+	# half-cell above `global_position`. Without this correction, a crab
+	# approaching from the north thinks it's much farther than one from the
+	# south for the same visible gap.
+	var crab_center: Vector2 = position + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+	var unit_center: Vector2 = aggro_target.global_position + Vector2(0, -grid.cell_size * 0.5)
+	var to_unit: Vector2 = unit_center - crab_center
+	var dist_unit: float = to_unit.length()
+	var dir_unit: Vector2 = to_unit.normalized() if dist_unit > 0.001 else Vector2.DOWN
+
+	# Wall-in-path detection. The cell orthogonally-adjacent in the dominant
+	# direction of dir_unit; reliable at cell boundaries (free-space ray
+	# sampling can overshoot to 2 cells when crab_center sits on a boundary).
+	var crab_cell: Vector2 = grid.worldToGrid(crab_center)
+	var ahead_cell: Vector2 = crab_cell + (
+		Vector2(sign(dir_unit.x), 0) if abs(dir_unit.x) >= abs(dir_unit.y)
+		else Vector2(0, sign(dir_unit.y))
+	)
+	var wall_in_way: bool = grid.is_wall_at(ahead_cell)
+
+	var target_world: Vector2
+	var dir: Vector2
+	if wall_in_way:
+		var wall_center: Vector2 = grid.gridToWorld(ahead_cell) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+		var to_wall: Vector2 = wall_center - crab_center
+		var dist_wall: float = to_wall.length()
+		dir = to_wall.normalized() if dist_wall > 0.001 else dir_unit
+		target_world = wall_center
+	else:
+		dir = dir_unit
+		target_world = unit_center
+
+	# Face the target. The down sprite is drawn "facing up" by default, so flip
+	# it vertically when moving south so the crab leads with its eyes/claws.
+	if abs(dir.x) > abs(dir.y):
+		_apply_sprite(_tex_side, dir.x > 0)
+	else:
+		_apply_sprite(_tex_down, false, flip_v_south and dir.y > 0.0)
+
+	var d: float = crab_center.distance_to(target_world)
+	var range_world: float = attack_range_tiles * float(grid.cell_size)
+	if d <= range_world:
+		if _attack_cooldown <= 0.0:
+			_wall_target_cell = ahead_cell if wall_in_way else _NO_WALL_TARGET
+			_start_lunge(dir)
+	else:
+		var step: float = speed * delta
+		if step > d:
+			step = d
+		position += dir * step
+
+
+func _start_lunge(dir: Vector2) -> void:
+	_is_attacking = true
+	_attack_t = 0.0
+	_attack_dir_vec = dir
+	_hit_landed = false
+
+
+func _tick_attack(delta: float) -> void:
+	_attack_t += delta
+	var f: float = clamp(_attack_t / LUNGE_DURATION, 0.0, 1.0)
+	# Triangle wave 0→1→0 for forward-then-back motion.
+	var amp: float = 1.0 - abs(f * 2.0 - 1.0)
+	var dist_world: float = LUNGE_DISTANCE_TILES * float(grid.cell_size)
+	if _sprite:
+		_sprite.position = _attack_dir_vec * (amp * dist_world)
+	# Damage lands at the apex of the lunge.
+	if not _hit_landed and f >= 0.5:
+		_hit_landed = true
+		_apply_combat_hit()
+	if _attack_t >= LUNGE_DURATION:
+		_is_attacking = false
+		_attack_cooldown = attack_cooldown_max
+		_wall_target_cell = _NO_WALL_TARGET
+		if _sprite:
+			_sprite.position = Vector2.ZERO
+
+
+func _apply_combat_hit() -> void:
+	# When _tick_combat targeted a wall instead of the unit, route damage to
+	# the grid's destructible-building system. Returns early without checking
+	# the unit so a wall hit doesn't also spend a unit attack tick.
+	if _wall_target_cell != _NO_WALL_TARGET:
+		grid.damage_wall_at(_wall_target_cell, attack_damage)
+		return
+	if aggro_target == null or not is_instance_valid(aggro_target):
+		return
+	if aggro_target.has_method("is_dead") and aggro_target.is_dead():
+		return
+	if aggro_target.has_method("take_damage"):
+		aggro_target.take_damage(attack_damage, self)
+
+
 func _walk(delta: float) -> void:
-	var remaining := SPEED * delta
+	var remaining := speed * delta
 	while remaining > 0.0 and not _path.is_empty():
 		var to_next: Vector2 = _path[0] - position
 		var dist := to_next.length()
-		# Update facing direction
+		# Update facing direction. Down-sprite is "facing up"; flip vertically
+		# when walking south so the crab faces the way it's moving.
 		var dir := to_next.normalized()
 		if abs(dir.x) > abs(dir.y):
 			_apply_sprite(_tex_side, dir.x > 0)
 		else:
-			_apply_sprite(_tex_down, false)
+			_apply_sprite(_tex_down, false, flip_v_south and dir.y > 0.0)
 		if dist <= remaining:
 			position = _path[0]
 			_path.pop_front()

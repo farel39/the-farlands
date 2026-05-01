@@ -8,6 +8,40 @@ extends Node2D
 
 var all_units: Array = []
 var selected_units: Array = []
+# Per-run stat snapshot, frozen on Victory/Defeat for the summary panel.
+# Every gameplay subsystem with an interesting outcome (kills, harvests,
+# crafts, downs, revives, choice events) bumps these counters via the
+# record_* helpers below — keeps tracking centralized and the summary
+# panel a one-stop read.
+# Ecosystem-disturbance counter. Every action that takes from / disrupts the
+# alien biome bumps this; the wave generator reads it (alongside a base time
+# ramp) to decide spawn density + creature variety. Drives the "be careful
+# what you do — every action affects the run" rubric: the more you harvest,
+# mine, and build, the harder the waves you'll have to defend against.
+# Looting already-dead salvage (crates / ship debris) and killing enemies
+# don't add threat — they're "free" actions.
+var threat_level: float = 0.0
+const THREAT_HARVEST: float = 1.0       # tree chop
+const THREAT_MINE_ROCK: float = 1.5     # plain rock
+const THREAT_MINE_ORE: float = 2.5      # rare metal — more disruptive
+const THREAT_BUILD: float = 1.0         # placing a built structure
+# Slow background growth so a fully-passive player still sees waves over
+# time. Without this, hiding in a corner = no waves ever.
+const THREAT_BASELINE_PER_SEC: float = 0.04
+
+
+var run_stats: Dictionary = {
+	"waves_completed": 0,
+	"kills":           0,
+	"trees_harvested": 0,
+	"rocks_mined":     0,
+	"items_crafted":   0,
+	"buildings_built": 0,
+	"downed_count":    0,
+	"revived_count":   0,
+	"run_time":        0.0,
+	"decisions":       [],  # Array of "Event Name → Choice picked" strings
+}
 var pending_tasks: Array = []
 
 var _fog_mat: ShaderMaterial = null
@@ -80,6 +114,48 @@ func _ready() -> void:
 	_setup_fog()
 	_explore_crash_site()
 	_setup_ambient_light()
+	_setup_wave_manager()
+	_setup_harvest_highlight()
+
+
+# World-space overlay that pulses outlines on harvestable / mineable objects
+# while the player is in Harvest or Mine command mode. Visibility-gated so it
+# only marks what the units can currently see.
+const _HARVEST_HIGHLIGHT_SCRIPT := preload("res://scripts/ui/HarvestHighlight.gd")
+var _harvest_highlight: Node2D = null
+
+func _setup_harvest_highlight() -> void:
+	_harvest_highlight = Node2D.new()
+	_harvest_highlight.set_script(_HARVEST_HIGHLIGHT_SCRIPT)
+	add_child(_harvest_highlight)
+	_harvest_highlight.call("setup", grid, self, gui)
+
+
+const WAVE_MANAGER_SCRIPT := preload("res://scripts/systems/WaveManager.gd")
+const EVENT_MANAGER_SCRIPT := preload("res://scripts/systems/EventManager.gd")
+var wave_manager: Node = null
+var event_manager: Node = null
+
+func _setup_wave_manager() -> void:
+	wave_manager = WAVE_MANAGER_SCRIPT.new()
+	wave_manager.name = "WaveManager"
+	add_child(wave_manager)
+	# Hook the GUI to wave events.
+	wave_manager.banner_message.connect(gui.show_wave_banner)
+	wave_manager.state_changed.connect(gui.on_wave_state_changed)
+	# WaveManager loads creature textures on demand from CreatureDefs based on
+	# the per-wave roster, so only the scene needs to be passed here.
+	var crab_scene := load("res://scenes/Crab.tscn") as PackedScene
+	wave_manager.start(grid, self, crab_scene)
+	# Random-event director — sits on top of the wave loop, fires events
+	# during peace + evac. Uses the same crab scene + creature def lookups
+	# as WaveManager for consistency.
+	event_manager = EVENT_MANAGER_SCRIPT.new()
+	event_manager.name = "EventManager"
+	add_child(event_manager)
+	if event_manager.has_signal("event_announced"):
+		event_manager.event_announced.connect(gui.show_event_banner)
+	event_manager.start(grid, self, wave_manager, crab_scene)
 
 
 func _setup_ambient_light() -> void:
@@ -212,6 +288,30 @@ func _update_fog() -> void:
 					if _explored_img.get_pixel(cx, cy).r < 0.5:
 						_explored_img.set_pixel(cx, cy, Color.WHITE)
 						explored_dirty = true
+	# Player-built light sources (campfires, floodlights) also illuminate
+	# their surrounding cells — same fog-of-war behavior as a unit standing
+	# there with their flashlight on. Combined with Unit._can_see's matching
+	# check, this means enemies wandering into the lit perimeter become
+	# both visible on the map AND auto-engaged in Defend stance.
+	for entry in grid.get_building_lights():
+		var lp: Vector2 = entry.world_pos
+		var lr: float = float(entry.radius)
+		var lr_cells: int = int(lr / cs) + 1
+		var lcx: int = int(lp.x / cs)
+		var lcy: int = int(lp.y / cs)
+		for ldx in range(-lr_cells, lr_cells + 1):
+			for ldy in range(-lr_cells, lr_cells + 1):
+				var lcell_x: int = lcx + ldx
+				var lcell_y: int = lcy + ldy
+				if lcell_x < 0 or lcell_x >= grid.width or lcell_y < 0 or lcell_y >= grid.height:
+					continue
+				var pt := Vector2(float(lcell_x) * cs + cs * 0.5, float(lcell_y) * cs + cs * 0.5)
+				if pt.distance_to(lp) > lr:
+					continue
+				_visible_cells[Vector2i(lcell_x, lcell_y)] = true
+				if _explored_img.get_pixel(lcell_x, lcell_y).r < 0.5:
+					_explored_img.set_pixel(lcell_x, lcell_y, Color.WHITE)
+					explored_dirty = true
 	if explored_dirty:
 		_explored_tex.update(_explored_img)
 	var tf_inv := canvas_tf.affine_inverse()
@@ -262,7 +362,8 @@ func _spawn_units() -> void:
 			"down": "res://art/characters/the engineer realistic downward.png",
 			"side": "res://art/characters/the engineer realistic sideways.png",
 			"up":   "res://art/characters/the engineer realistic facing up.png",
-			"name": "Raya",
+			"downed": "res://art/characters/the engineer downed.png",
+			"name": "Dax",
 			"role": "Engineer",
 			"lines": [
 				"I can probably fix the ship... given enough scrap.",
@@ -298,6 +399,7 @@ func _spawn_units() -> void:
 			"down": "res://art/characters/the medic realistic downward.png",
 			"side": "res://art/characters/the medic realistic sideways.png",
 			"up":   "res://art/characters/the medic realistic facing up.png",
+			"downed": "res://art/characters/the medic downed.png",
 			"name": "Mira",
 			"role": "Medic",
 			"lines": [
@@ -334,7 +436,8 @@ func _spawn_units() -> void:
 			"down": "res://art/characters/the pilot realistic downward.png",
 			"side": "res://art/characters/the pilot realistic sideways.png",
 			"up":   "res://art/characters/the pilot realistic facing up.png",
-			"name": "Dax",
+			"downed": "res://art/characters/the pilot downed.png",
+			"name": "Raya",
 			"role": "Pilot",
 			"lines": [
 				"I've crash-landed before, but never on a planet this... alive.",
@@ -397,6 +500,10 @@ func _spawn_units() -> void:
 	for i in range(1, 49):
 		var frame_path := "res://art/characters/the engineer attacking animation downward frames/frame_%04d.png" % i
 		engineer_attack_down_frames.append(load(frame_path) as Texture2D)
+	var engineer_attack_up_frames: Array = []
+	for i in range(1, 31):
+		var frame_path := "res://art/characters/the engineer attacking animation facing up frames/frame_%03d.png" % i
+		engineer_attack_up_frames.append(load(frame_path) as Texture2D)
 
 	# Preload engineer walk frames
 	var engineer_walk_frames: Array = []
@@ -408,9 +515,10 @@ func _spawn_units() -> void:
 		var frame_path := "res://art/characters/the engineer walking animation facing up frames/frame_%04d.png" % i
 		engineer_walk_up_frames.append(load(frame_path) as Texture2D)
 	var engineer_walk_down_frames: Array = []
-	for i in range(1, 49):
-		var frame_path := "res://art/characters/the engineer walking animation downward frames/frame_%04d.png" % i
-		engineer_walk_down_frames.append(load(frame_path) as Texture2D)
+	for i in range(1, 32):
+		var frame_path := "res://art/characters/the engineer walking animation downward frames/frame_%03d.png" % i
+		if ResourceLoader.exists(frame_path):
+			engineer_walk_down_frames.append(load(frame_path) as Texture2D)
 
 	# Preload pilot walk frames
 	var pilot_walk_frames: Array = []
@@ -425,6 +533,36 @@ func _spawn_units() -> void:
 	for i in range(1, 49):
 		var frame_path := "res://art/characters/the pilot walking animation downward frames/frame_%04d.png" % i
 		pilot_walk_down_frames.append(load(frame_path) as Texture2D)
+
+	# Preload medic attack frames (pistol)
+	var medic_attack_side_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the medic attacking animation sideway frames/frame_%04d.png" % i
+		medic_attack_side_frames.append(load(frame_path) as Texture2D)
+	var medic_attack_up_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the medic attacking animation facing up frames/frame_%03d.png" % i
+		medic_attack_up_frames.append(load(frame_path) as Texture2D)
+	var medic_attack_down_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the medic attacking animation downward frames/frame_%03d.png" % i
+		if ResourceLoader.exists(frame_path):
+			medic_attack_down_frames.append(load(frame_path) as Texture2D)
+
+	# Preload pilot attack frames (pistol)
+	var pilot_attack_side_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the pilot attacking animation sideway frames/frame_%04d.png" % i
+		pilot_attack_side_frames.append(load(frame_path) as Texture2D)
+	var pilot_attack_up_frames: Array = []
+	for i in range(1, 31):
+		var frame_path := "res://art/characters/the pilot attacking animation facing up frames/frame_%03d.png" % i
+		pilot_attack_up_frames.append(load(frame_path) as Texture2D)
+	var pilot_attack_down_frames: Array = []
+	for i in range(1, 49):
+		var frame_path := "res://art/characters/the pilot attacking animation downward frames/frame_%03d.png" % i
+		if ResourceLoader.exists(frame_path):
+			pilot_attack_down_frames.append(load(frame_path) as Texture2D)
 
 	# Preload medic walk frames
 	var medic_walk_frames: Array = []
@@ -447,23 +585,53 @@ func _spawn_units() -> void:
 		var side_tex := load(c["side"]) as Texture2D
 		var up_tex   := load(c["up"])   as Texture2D
 		u.set_character_textures(down_tex, side_tex, up_tex)
+		if c.has("downed"):
+			u.set_downed_texture(load(c["downed"]) as Texture2D)
 		u.data.name = c["name"]
 		u.data.role = c["role"]
 		u.data.portrait = down_tex
 		u.data.dialog_lines = c["lines"]
 		u.data.inspect_lines = c["inspect"]
-		if c["name"] == "Raya":
+		# One injector per survivor at start — enough for one revive each before
+		# the team needs to find / craft more. Crashed-ship loot can pad this.
+		u.data.inventory["Revival Injector"] = int(u.data.inventory.get("Revival Injector", 0)) + 1
+		if c["name"] == "Dax":
+			# Walk-down source frames are 480x848 — bigger than the cell. This
+			# offset makes the sprite render taller than cell_size so the body
+			# matches the attack-down silhouette instead of looking shrunken.
+			# Must be set BEFORE set_walk_frames_down (which applies the idle frame).
+			u.walk_down_top_offset = 200
+			u.walk_down_y_nudge = 60   # shift sprite down so feet sit on tile
+			u.walk_fps_down = 16.0     # slower stride than the side/up walk loops
+			# Idle facing-down pose = the FIRST frame of the walk-down animation
+			# (index 0 → frame_001.png). Default is already 0; setting it
+			# explicitly keeps the intent obvious if the default ever changes.
+			u._walk_idle_frame_down = 0
+			u._walk_down_initial_frame = 0
 			u.set_walk_frames_side(engineer_walk_frames)
 			u.set_walk_frames_up(engineer_walk_up_frames)
 			u.set_walk_frames_down(engineer_walk_down_frames)
 			u.set_attack_frames_side(engineer_attack_frames)
 			u.set_attack_frames_down(engineer_attack_down_frames)
+			u.set_attack_frames_up(engineer_attack_up_frames)
 			u._walk_loop_start_up = 16
-			u._walk_loop_start_down = 29
+			u._walk_loop_start_down = 22
+			# Force-apply the idle frame at the very end of the engineer's
+			# setup so nothing earlier (set_character_textures' default
+			# tex_down apply, etc.) leaves a stale sprite on screen.
+			if not engineer_walk_down_frames.is_empty():
+				u._apply_sprite_walk_down(engineer_walk_down_frames[0])
 		elif c["name"] == "Mira":
+			# Medic auto-heals by default — players can toggle off in the
+			# char-inventory or by setting heal priority OFF in the Work tab.
+			u.auto_heal_enabled = true
 			u.set_walk_frames_side(medic_walk_frames)
 			u.set_walk_frames_up(medic_walk_up_frames)
 			u.set_walk_frames_down(medic_walk_down_frames)
+			u.set_attack_frames_side(medic_attack_side_frames)
+			u.set_attack_frames_up(medic_attack_up_frames)
+			u.set_attack_frames_down(medic_attack_down_frames)
+			u.idle_side_tex = medic_attack_side_frames[0]
 			u._walk_idle_frame_side = 2
 			u._walk_idle_frame_down = 3
 			u._walk_loop_start_up = 15
@@ -471,10 +639,53 @@ func _spawn_units() -> void:
 			u._walk_up_initial_frame = 2
 			u.walk_fps_side = 12.0
 			u.walk_fps_up = 30.0
-		elif c["name"] == "Dax":
+			# Pistol attack tuning (side/up sprites are 720x1280)
+			u.attack_side_px_per_cell = 1280
+			u.attack_side_feet_y = 1264   # walk-side feet sit ~4% above tile bottom
+			u.attack_side_x_nudge = 50    # source-px forward (pistol pose leans into the shot)
+			u.attack_up_px_per_cell = 1280
+			u.attack_up_feet_y = 1278
+			# Down-attack frames are 480x848; walk-down is 480x688. Setting the
+			# offset to 848-688 = 160 makes both directions use the same scale
+			# factor, so the medic body renders at identical size whether
+			# attacking or walking down. Total sprite height = 1.23 cells (the
+			# extra 0.23 cells is the gun pose extending above the body).
+			u.attack_down_top_offset = 160
+			# Medic's shooting-down pose sits a touch high on the canvas; nudge
+			# the rendered sprite down so feet land on the tile cleanly.
+			u.attack_down_y_nudge = 50
+			# Combat stats — pistol (ranged). Nerfed from prior values
+			# (6 dmg / 1.0s / 5 tiles / 8 aggro) since ranged stacking on
+			# two characters trivialized waves. Still useful for softening
+			# crabs as they close, just not auto-deletes them.
+			u.data.attack_damage = 5
+			u.data.attack_range_tiles = 4.0
+			u.data.attack_cooldown = 1.4
+			u.data.aggro_range_tiles = 6.0
+			u.data.attack_hit_ratio = 0.3
+			# Chained shots skip the holster→draw intro frames
+			u.attack_chain_start_side = 24
+			u.attack_chain_start_up = 6
+			u.attack_chain_start_down = 10
+		elif c["name"] == "Raya":
 			u.set_walk_frames_side(pilot_walk_frames)
 			u.set_walk_frames_up(pilot_walk_up_frames)
 			u.set_walk_frames_down(pilot_walk_down_frames)
+			u.set_attack_frames_side(pilot_attack_side_frames)
+			u.set_attack_frames_up(pilot_attack_up_frames)
+			u.set_attack_frames_down(pilot_attack_down_frames)
+			# Side-idle pose = the first frame of the side attack animation
+			# (gun holstered / at-ease). Without this, the post-attack idle
+			# fell back to a walk-side frame that still shows her aiming, so
+			# she'd freeze in firing pose after killing the last enemy.
+			# Same trick the medic uses.
+			u.idle_side_tex = pilot_attack_side_frames[0]
+			# Pilot attack-down sprite is 720x1280; walk-down is 480x773. To match
+			# body sizes (so the pilot doesn't suddenly shrink when firing down),
+			# offset = 1280 - 773 = 507 worth of "above the cell" — but since the
+			# actual body fills more than 773 source-px of attack-down, use a
+			# smaller offset (~120) that lines up the visible body height.
+			u.attack_down_top_offset = 120
 			u._walk_idle_frame_side = 7
 			u._walk_idle_frame_down = 16
 			u._walk_loop_start_up = 13
@@ -482,6 +693,57 @@ func _spawn_units() -> void:
 			u.walk_fps_side = 12.0
 			u.walk_fps_up = 12.0
 			u.walk_fps_down = 12.0
+			# Pistol attack tuning (sprites are 720x1280; walk-up tex is 720x1180)
+			u.attack_side_px_per_cell = 1230   # smaller = bigger sprite (~4% larger than walk-side scale)
+			u.attack_side_feet_y = 1295        # adjusted so feet still match walk-side after the scale change
+			u.attack_side_x_nudge = 106        # source-px forward (matches walk-side body x-center)
+			u.attack_up_px_per_cell = 1180
+			u.attack_up_feet_y = 1229
+			# Combat stats — pistol (ranged). Same nerf as Mira so the team's
+			# two ranged characters can't trivialize waves by stacking.
+			u.data.attack_damage = 5
+			u.data.attack_range_tiles = 4.0
+			u.data.attack_cooldown = 1.4
+			u.data.aggro_range_tiles = 6.0
+			u.data.attack_hit_ratio = 0.3
+			# Chained shots skip the holster→draw intro frames
+			u.attack_chain_start_side = 16
+			u.attack_chain_start_up = 6
+			u.attack_chain_start_down = 16
+
+		# Role-based default priorities so the game has sensible behavior on
+		# first run. Players can re-tune each cell from the Work panel.
+		match c.get("role", ""):
+			"Engineer":
+				u.data.work_priorities = {
+					"combat":  UnitData.Priority.MED,
+					"heal":    UnitData.Priority.LOW,
+					"repair":  UnitData.Priority.HIGH,
+					"build":   UnitData.Priority.HIGH,
+					"harvest": UnitData.Priority.HIGH,
+					"mine":    UnitData.Priority.HIGH,
+					"gather":  UnitData.Priority.MED,
+				}
+			"Medic":
+				u.data.work_priorities = {
+					"combat":  UnitData.Priority.MED,
+					"heal":    UnitData.Priority.HIGH,
+					"repair":  UnitData.Priority.MED,
+					"build":   UnitData.Priority.MED,
+					"harvest": UnitData.Priority.LOW,
+					"mine":    UnitData.Priority.LOW,
+					"gather":  UnitData.Priority.HIGH,
+				}
+			"Pilot":
+				u.data.work_priorities = {
+					"combat":  UnitData.Priority.HIGH,
+					"heal":    UnitData.Priority.LOW,
+					"repair":  UnitData.Priority.MED,
+					"build":   UnitData.Priority.MED,
+					"harvest": UnitData.Priority.MED,
+					"mine":    UnitData.Priority.MED,
+					"gather":  UnitData.Priority.HIGH,
+				}
 		all_units.append(u)
 		u.became_idle.connect(_assign_tasks)
 		u.became_idle.connect(func(): _on_unit_idle(u))
@@ -496,8 +758,26 @@ func _spawn_units() -> void:
 	$Camera2D.center_on(centroid)
 
 
+var _pause_menu: Node = null
+
+func _open_pause_menu() -> void:
+	if _pause_menu and is_instance_valid(_pause_menu):
+		return
+	_pause_menu = load("res://scenes/PauseMenu.tscn").instantiate()
+	# Add to the existing CanvasLayer so it sits above the in-game GUI.
+	$CanvasLayer.add_child(_pause_menu)
+	get_tree().paused = true
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ESCAPE:
+			# Don't grab Esc while a placement/blueprint mode is active — Grid handles that.
+			if grid.placement_mode or grid.blueprint_mode:
+				return
+			_open_pause_menu()
+			get_viewport().set_input_as_handled()
+			return
 		if event.keycode == KEY_A:
 			if selected_units.size() == 1 and (selected_units[0] as Unit).drafted:
 				(selected_units[0] as Unit).trigger_attack()
@@ -505,6 +785,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if event.keycode == KEY_R:
 			for u in selected_units:
+				# Skip downed teammates — they need to be revived before
+				# they can take orders again.
+				if u.is_downed:
+					continue
 				u.set_drafted(not u.drafted)
 			get_viewport().set_input_as_handled()
 			return
@@ -522,6 +806,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		gui.hide_unit_panel()
 	if grid.placement_mode:
 		return
+	# Command-mode hijack: while an order is active, left-click dispatches the
+	# order to the clicked target and right-click exits the mode entirely.
+	# This must run before the regular click handlers so selection / move
+	# commands don't fire underneath.
+	if gui.command_mode != "":
+		if event is InputEventMouseButton and event.pressed:
+			if event.button_index == MOUSE_BUTTON_RIGHT:
+				gui.exit_command_mode()
+				get_viewport().set_input_as_handled()
+				return
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				_handle_command_click(gui.command_mode)
+				get_viewport().set_input_as_handled()
+				return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		gui.hide_unit_panel()
 		_handle_right_click()
@@ -551,8 +849,13 @@ func _unhandled_input(event: InputEvent) -> void:
 func _handle_click() -> void:
 	var grid_pos := grid.worldToGrid(get_global_mouse_position())
 	var mouse_screen := get_viewport().get_mouse_position()
+	# Shift-click extends or toggles the existing selection instead of
+	# replacing it. Held-shift on empty terrain also leaves the selection
+	# alone — accidentally missing a click shouldn't dump your multi-select.
+	var shift_held: bool = Input.is_key_pressed(KEY_SHIFT)
 	if not grid.grid.has(grid_pos):
-		_set_selection([])
+		if not shift_held:
+			_set_selection([])
 		return
 
 	# Clicked on a unit?
@@ -560,12 +863,24 @@ func _handle_click() -> void:
 	for u in all_units:
 		var unit_center: Vector2 = u.position + Vector2(0, -grid.cell_size * 0.5)
 		if click_world.distance_to(unit_center) < grid.cell_size * 0.55:
-			_set_selection([u])
-			gui.show_unit_panel(u, mouse_screen)
+			if shift_held:
+				var current: Array = selected_units.duplicate()
+				if current.has(u):
+					current.erase(u)
+				else:
+					current.append(u)
+				_set_selection(current)
+				# Don't pop the unit panel during multi-select buildup —
+				# panel is for inspecting a single unit, which conflicts
+				# with the "growing the selection" intent.
+			else:
+				_set_selection([u])
+				gui.show_unit_panel(u, mouse_screen)
 			return
 
-	# Clicked anywhere else — deselect
-	_set_selection([])
+	# Clicked empty terrain — clear selection (unless shift held, see above).
+	if not shift_held:
+		_set_selection([])
 
 	var cell: CellData = grid.grid[grid_pos]
 	if cell.occupier == "Tree":
@@ -585,9 +900,21 @@ func _finish_box_select() -> void:
 		var screen_pos: Vector2 = canvas_xform * u.global_position
 		if box.has_point(screen_pos):
 			found.append(u)
-	_set_selection(found)
-	if found.size() > 1:
-		gui.show_group_panel(found, get_viewport().get_mouse_position())
+	# Shift-drag adds to the existing selection instead of replacing — same
+	# semantics as shift-click on a portrait or world unit. Plain drag still
+	# replaces, even if the box is empty (so an intentional miss clears).
+	if Input.is_key_pressed(KEY_SHIFT):
+		var combined: Array = selected_units.duplicate()
+		for u in found:
+			if not combined.has(u):
+				combined.append(u)
+		_set_selection(combined)
+		if combined.size() > 1:
+			gui.show_group_panel(combined, get_viewport().get_mouse_position())
+	else:
+		_set_selection(found)
+		if found.size() > 1:
+			gui.show_group_panel(found, get_viewport().get_mouse_position())
 
 
 func _set_selection(units: Array) -> void:
@@ -672,29 +999,457 @@ func _on_inspect_requested() -> void:
 
 
 func _on_cut_requested(grid_pos: Vector2) -> void:
-	pending_tasks.append({"type": "harvest", "pos": grid_pos})
+	# Mark the tree's root so the harvest indicator pins to the same anchor
+	# the worker will actually walk to.
+	var root: Vector2 = grid.get_tree_root(grid_pos)
+	pending_tasks.append({"type": "harvest", "pos": root})
+	grid.set_task_marker(root, "harvest")
 	_assign_tasks()
+
+
+# ── Run stat recording helpers ─────────────────────────────────────────────
+# Called from gameplay subsystems whenever something stat-worthy happens.
+# Centralized so the summary panel reads a single dict and so future
+# additions (achievements, etc.) only need one hook.
+func record_kill() -> void:
+	run_stats.kills += 1
+
+
+func record_tree_harvested() -> void:
+	run_stats.trees_harvested += 1
+	threat_level += THREAT_HARVEST
+
+
+# Called when a single rock is mined (Stone-yielding rock from world spawn).
+func record_rock_mined() -> void:
+	run_stats.rocks_mined += 1
+	threat_level += THREAT_MINE_ROCK
+
+
+# Called when an Ore deposit is mined — heavier disturbance than a regular
+# rock, mirroring the "rare metals attract attention" theme.
+func record_ore_mined() -> void:
+	run_stats.rocks_mined += 1
+	threat_level += THREAT_MINE_ORE
+
+
+func record_item_crafted() -> void:
+	run_stats.items_crafted += 1
+
+
+func record_building_built() -> void:
+	run_stats.buildings_built += 1
+	threat_level += THREAT_BUILD
+
+
+func record_downed() -> void:
+	run_stats.downed_count += 1
+
+
+func record_revived() -> void:
+	run_stats.revived_count += 1
+
+
+func record_wave_completed() -> void:
+	run_stats.waves_completed += 1
+
+
+# Logged decisions render as a short bullet list on the summary panel so the
+# player can see the choices that shaped this run.
+func record_decision(event_name: String, choice: String) -> void:
+	run_stats.decisions.append("%s → %s" % [event_name, choice])
+
+
+# Returns { item_name: deficit } for a blueprint — what the team still needs
+# before construction can start. Empty dict means the build can dispatch right
+# now (paid blueprint or all costs covered). Powers both _can_build_now and
+# the GUI shortage toast on a manual Build click.
+func _missing_materials_for(bp_pos: Vector2) -> Dictionary:
+	if not grid.blueprints.has(bp_pos):
+		return {}
+	var bp: Dictionary = grid.blueprints[bp_pos]
+	if bp.has("spent_cost"):
+		return {}
+	var cost: Dictionary = bp.def.cost
+	var missing: Dictionary = {}
+	for item in cost:
+		var team_total: int = 0
+		for u in all_units:
+			if not is_instance_valid(u):
+				continue
+			var unit_node: Unit = u as Unit
+			if unit_node.is_dead() or unit_node.is_downed:
+				continue
+			team_total += int(unit_node.data.inventory.get(item, 0))
+		var deficit: int = int(cost[item]) - team_total
+		if deficit > 0:
+			missing[item] = deficit
+	return missing
+
+
+# True iff a build task at `bp_pos` is dispatchable right now: blueprint exists,
+# and either it's already paid (mid-build handoff) or the team's combined
+# inventory covers every cost item. Used by _assign_tasks to defer builds the
+# team can't afford yet.
+# Cancel any queued / active task whose target sits on or under `click_cell`.
+# Resolves the click into every possible anchor (tree root, building anchor,
+# rock / ore / driftwood single cell, downed unit at the world position) so
+# the player can click anywhere on a marked object — including canopy, wall
+# footprints, or downed bodies — and the cancel hits.
+#
+# Effects:
+#   • Removes matching pending_tasks entries
+#   • Tells any unit currently working on the target to stop
+#   • Clears the visual task marker on the anchor
+#   • Wipes saved harvest / mine progress so the next worker doesn't resume
+func _cancel_tasks_at_cell(click_cell: Vector2, mouse_world: Vector2) -> void:
+	var anchors: Dictionary = {}  # set of anchor cells touched
+
+	# Tree root (3x3 footprint).
+	if grid.tree_root.has(click_cell):
+		anchors[grid.get_tree_root(click_cell)] = true
+	# Building anchor (walls / fabricator / lighting / blueprints).
+	if grid.cell_to_building.has(click_cell):
+		anchors[grid.cell_to_building[click_cell]] = true
+	# Blueprint anchor (cell-mask aware).
+	var bp_anchor: Vector2 = grid.blueprint_at_cell(click_cell)
+	if bp_anchor != Vector2(-1, -1):
+		anchors[bp_anchor] = true
+	# Single-cell harvestables.
+	if grid.grid.has(click_cell):
+		var occ: Variant = grid.grid[click_cell].occupier
+		if occ == "Rock" or occ == "Ore" or occ == "Driftwood":
+			anchors[click_cell] = true
+	# Downed unit at the click — cancels a queued revive.
+	var downed: Unit = _downed_unit_at_world(mouse_world)
+	if downed != null:
+		anchors[downed.get_grid_pos()] = true
+
+	if anchors.is_empty():
+		return
+
+	# Drop matching entries from pending_tasks.
+	pending_tasks = pending_tasks.filter(func(t):
+		# Build/repair/demolish/harvest/mine all key by anchor in `pos`.
+		if anchors.has(t.pos):
+			return false
+		# Revive task carries a target_unit reference — match its grid pos.
+		if t.type == "revive":
+			var rt = t.get("target_unit")
+			if rt != null and is_instance_valid(rt) and anchors.has(rt.get_grid_pos()):
+				return false
+		return true
+	)
+
+	# Abort any unit currently mid-task on a matching target.
+	for u in all_units:
+		if not is_instance_valid(u):
+			continue
+		var unit_node: Unit = u as Unit
+		if anchors.has(unit_node.harvest_target):
+			grid.tree_harvest_progress.erase(unit_node.harvest_target)
+			grid.hide_harvest_bar(unit_node.harvest_target)
+			unit_node.harvest_target = Vector2(-1, -1)
+			unit_node._harvest_timer = -1.0
+			unit_node.path.clear()
+		if anchors.has(unit_node.mine_target):
+			grid.rock_mine_progress.erase(unit_node.mine_target)
+			grid.hide_mine_bar(unit_node.mine_target)
+			unit_node.mine_target = Vector2(-1, -1)
+			unit_node._mine_timer = -1.0
+			unit_node.path.clear()
+		if anchors.has(unit_node.repair_target):
+			unit_node.repair_target = Vector2(-1, -1)
+			unit_node._repair_timer = -1.0
+			unit_node.path.clear()
+		if anchors.has(unit_node.demolish_target):
+			unit_node.demolish_target = Vector2(-1, -1)
+			unit_node._demolish_timer = -1.0
+			unit_node.path.clear()
+		if anchors.has(unit_node.build_target):
+			# Mid-build cancel: refund spent_cost so the player isn't stealth-
+			# taxed for changing their mind. Use the existing cancel-with-refund
+			# helper so the blueprint sprite + marker are also torn down.
+			var bp_target: Vector2 = unit_node.build_target
+			unit_node.build_target = Vector2(-1, -1)
+			unit_node._build_timer = -1.0
+			unit_node.path.clear()
+			_cancel_blueprint_with_refund(bp_target)
+		if unit_node.revive_target != null and is_instance_valid(unit_node.revive_target):
+			if anchors.has(unit_node.revive_target.get_grid_pos()):
+				unit_node.revive_target = null
+				unit_node.path.clear()
+
+	# Clear visual markers on every touched anchor.
+	for a in anchors.keys():
+		grid.clear_task_marker(a)
+
+
+func _can_build_now(bp_pos: Vector2) -> bool:
+	if not grid.blueprints.has(bp_pos):
+		return false
+	return _missing_materials_for(bp_pos).is_empty()
+
+
+# Public hook: anything that grows the team's inventory (harvest, mine, loot
+# drop, refund) calls this so deferred build tasks get a fresh look. Cheap
+# enough to call freely — _assign_tasks short-circuits when nothing changed.
+func notify_inventory_changed() -> void:
+	_assign_tasks()
+
+
+# Pull a multi-item dict from the team's combined inventory. Returns true on
+# success (every item fully covered); on failure, no inventory is modified.
+# Used by the fabricator queue — committing a craft is all-or-nothing so the
+# player doesn't get half-charged for a recipe they can't afford.
+func pull_shared_resources(items: Dictionary) -> bool:
+	# First pass: confirm the team has every item in sufficient quantity.
+	for item_name in items.keys():
+		var needed: int = int(items[item_name])
+		var team_total: int = 0
+		for u in all_units:
+			if not is_instance_valid(u):
+				continue
+			var unit_node: Unit = u as Unit
+			if unit_node.is_dead() or unit_node.is_downed:
+				continue
+			team_total += int(unit_node.data.inventory.get(item_name, 0))
+		if team_total < needed:
+			return false
+	# Second pass: actually deduct, distributed across donors.
+	for item_name in items.keys():
+		var remaining: int = int(items[item_name])
+		for u in all_units:
+			if remaining <= 0:
+				break
+			if not is_instance_valid(u):
+				continue
+			var unit_node: Unit = u as Unit
+			if unit_node.is_dead() or unit_node.is_downed:
+				continue
+			var inv: Dictionary = unit_node.data.inventory
+			var have: int = int(inv.get(item_name, 0))
+			if have <= 0:
+				continue
+			var take: int = min(have, remaining)
+			var new_count: int = have - take
+			if new_count <= 0:
+				inv.erase(item_name)
+			else:
+				inv[item_name] = new_count
+			remaining -= take
+	return true
+
+
+# Dispatch a single click in command-mode. Routes to the right pending_tasks
+# entry based on the active mode and what the click landed on. No-ops cleanly
+# (silently) on a click that doesn't match the mode — e.g., clicking grass in
+# Repair mode does nothing rather than crashing.
+func _handle_command_click(mode: String) -> void:
+	var mouse_world: Vector2 = get_global_mouse_position()
+	var click_cell: Vector2 = grid.worldToGrid(mouse_world)
+	if not grid.grid.has(click_cell):
+		return
+	match mode:
+		"repair":
+			if not grid.cell_to_building.has(click_cell):
+				return
+			var anchor: Vector2 = grid.cell_to_building[click_cell]
+			if not grid.buildings.has(anchor):
+				return
+			var b: Dictionary = grid.buildings[anchor]
+			if int(b.hp) >= int(b.max_hp):
+				return  # already at full HP, nothing to do
+			# Avoid duplicate tasks for the same anchor.
+			for t in pending_tasks:
+				if t.type == "repair" and t.pos == anchor:
+					return
+			pending_tasks.append({"type": "repair", "pos": anchor})
+			grid.set_task_marker(anchor, "repair")
+			_assign_tasks()
+		"harvest":
+			if not grid.tree_root.has(click_cell):
+				return
+			var root: Vector2 = grid.get_tree_root(click_cell)
+			for t in pending_tasks:
+				if t.type == "harvest" and t.pos == root:
+					return
+			pending_tasks.append({"type": "harvest", "pos": root})
+			grid.set_task_marker(root, "harvest")
+			_assign_tasks()
+		"mine":
+			if not grid.grid.has(click_cell):
+				return
+			var occ: Variant = grid.grid[click_cell].occupier
+			if occ != "Rock" and occ != "Ore":
+				return
+			for t in pending_tasks:
+				if t.type == "mine" and t.pos == click_cell:
+					return
+			pending_tasks.append({"type": "mine", "pos": click_cell})
+			grid.set_task_marker(click_cell, "mine")
+			_assign_tasks()
+		"revive":
+			# Click a downed body in the world to enqueue a revive task.
+			# Picks up the closest downed unit at the click (matches the
+			# right-click flow), then any free non-downed teammate with
+			# heal-priority > OFF dispatches via _assign_tasks.
+			var downed_target: Unit = _downed_unit_at_world(mouse_world)
+			if downed_target == null:
+				return
+			# Dedupe — same target already queued.
+			for t in pending_tasks:
+				if t.type == "revive" and t.get("target_unit") == downed_target:
+					return
+			pending_tasks.append({
+				"type": "revive",
+				"pos": downed_target.get_grid_pos(),
+				"target_unit": downed_target,
+			})
+			_assign_tasks()
+		"cancel":
+			# Cancel any queued / in-progress task whose target sits on or
+			# under the clicked cell. Resolves the cell to every possible
+			# anchor (tree root, building anchor, downed unit, raw cell)
+			# and wipes the matching pending_tasks entries + aborts any
+			# unit currently working on them + clears the task marker.
+			_cancel_tasks_at_cell(click_cell, mouse_world)
+		"build":
+			# Manual nudge for a blueprint that didn't get auto-built (usually
+			# because materials were short at placement time). Resolves the
+			# clicked cell to its blueprint anchor, dedupes against existing
+			# pending build tasks, then dispatches.
+			var bp_anchor: Vector2 = grid.blueprint_at_cell(click_cell)
+			if bp_anchor == Vector2(-1, -1):
+				return
+			# Surface the deficit to the player even if we still queue the task
+			# — the build will fire automatically once mats arrive (harvest /
+			# mine / loot drop / refund), but the toast tells them what to go
+			# get instead of leaving them guessing why nothing happens.
+			var missing: Dictionary = _missing_materials_for(bp_anchor)
+			if not missing.is_empty() and gui != null and gui.has_method("notify_shortage"):
+				var bp_world: Vector2 = grid.gridToWorld(bp_anchor) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+				gui.notify_shortage(bp_world, missing)
+			grid.set_task_marker(bp_anchor, "build")
+			for t in pending_tasks:
+				if t.type == "build" and t.pos == bp_anchor:
+					_assign_tasks()
+					return
+			pending_tasks.append({"type": "build", "pos": bp_anchor})
+			_assign_tasks()
+		"demolish":
+			# A click on an unbuilt blueprint cancels it instantly and refunds
+			# whatever materials were committed. No worker needed — the player
+			# is just changing their mind about the placement.
+			var bp_anchor: Vector2 = grid.blueprint_at_cell(click_cell)
+			if bp_anchor != Vector2(-1, -1):
+				_cancel_blueprint_with_refund(bp_anchor)
+				return
+			if not grid.cell_to_building.has(click_cell):
+				return
+			var dem_anchor: Vector2 = grid.cell_to_building[click_cell]
+			if not grid.buildings.has(dem_anchor):
+				return
+			for t in pending_tasks:
+				if t.type == "demolish" and t.pos == dem_anchor:
+					return
+			pending_tasks.append({"type": "demolish", "pos": dem_anchor})
+			# Demolish overrides any pending repair on the same wall — the
+			# marker swaps to the red "X" so the player sees the change.
+			grid.set_task_marker(dem_anchor, "demolish")
+			_assign_tasks()
 
 
 func _on_blueprint_placed(grid_pos: Vector2, _def: Dictionary) -> void:
 	pending_tasks.append({"type": "build", "pos": grid_pos})
+	grid.set_task_marker(grid_pos, "build")
 	_assign_tasks()
 
 
 func _assign_tasks() -> void:
+	# Tracks build tasks we've already pushed to the back of the queue this
+	# round so a queue full of "needs more materials" builds doesn't spin
+	# forever. Once we've cycled past a deferred task without dispatching, we
+	# stop trying — they'll be retried next time _assign_tasks is called.
+	var deferred_seen: Dictionary = {}
 	while not pending_tasks.is_empty():
-		var idle := all_units.filter(func(u): return not u.drafted and not u.is_busy())
-		if idle.is_empty():
-			break
 		var task: Dictionary = pending_tasks[0]
-		var closest: Unit = idle[0]
-		for u in idle:
+		# Stale build task (blueprint canceled / completed by another worker
+		# while this task waited) — drop it and try the next.
+		if task.type == "build" and not grid.blueprints.has(task.pos):
+			pending_tasks.remove_at(0)
+			continue
+		# Build task without enough materials — push to the back so other
+		# tasks (harvest, repair, etc.) can run in front of it. The hooks in
+		# notify_inventory_changed() retry the whole queue once new mats land.
+		if task.type == "build" and not _can_build_now(task.pos):
+			var key: String = "build:%s" % str(task.pos)
+			if deferred_seen.has(key):
+				break  # cycled back to a task we already deferred this round
+			deferred_seen[key] = true
+			pending_tasks.remove_at(0)
+			pending_tasks.append(task)
+			continue
+		# Revive task — drop if the target is gone (already revived elsewhere
+		# or evac'd / dead before we got to it). Otherwise dispatch with the
+		# heal priority key so medics naturally get first crack.
+		if task.type == "revive":
+			var rev_target = task.get("target_unit")
+			if rev_target == null or not is_instance_valid(rev_target) or not rev_target.is_downed:
+				pending_tasks.remove_at(0)
+				continue
+		var task_type: String = task.type
+		# Demolish piggybacks on the "build" priority — same idea (a colonist
+		# who builds is also the one who tears things down). Revive uses the
+		# heal priority — medics naturally get first crack at it.
+		var priority_key: String = task_type
+		if task_type == "demolish":
+			priority_key = "build"
+		elif task_type == "revive":
+			priority_key = "heal"
+		# Filter to idle, undrafted, alive units that haven't disabled this
+		# work type. Priority-OFF units refuse the task entirely.
+		var eligible: Array = all_units.filter(func(u: Unit) -> bool:
+			if not is_instance_valid(u) or u.is_dead():
+				return false
+			# Downed teammates can't take work — they need revival first.
+			if u.is_downed or u.evacuated:
+				return false
+			if u.drafted or u.is_busy():
+				return false
+			var pri: int = int(u.data.work_priorities.get(priority_key, UnitData.Priority.MED))
+			return pri > UnitData.Priority.OFF
+		)
+		if eligible.is_empty():
+			break
+		# Highest priority level wins. Within the same level, the closest unit
+		# to the task takes it.
+		var top_pri: int = -1
+		for u in eligible:
+			var pri: int = int((u as Unit).data.work_priorities.get(priority_key, UnitData.Priority.MED))
+			if pri > top_pri:
+				top_pri = pri
+		var candidates: Array = eligible.filter(func(u: Unit) -> bool:
+			return int(u.data.work_priorities.get(priority_key, UnitData.Priority.MED)) == top_pri
+		)
+		var closest: Unit = candidates[0]
+		for u in candidates:
 			if u.get_grid_pos().distance_to(task.pos) < closest.get_grid_pos().distance_to(task.pos):
 				closest = u
 		pending_tasks.remove_at(0)
 		match task.type:
-			"harvest": closest.queue_harvest(task.pos)
-			"build":   closest.queue_build(task.pos)
+			"harvest":  closest.queue_harvest(task.pos)
+			"build":    closest.queue_build(task.pos)
+			"repair":   closest.queue_repair(task.pos)
+			"demolish": closest.queue_demolish(task.pos)
+			"mine":     closest.queue_mine(task.pos)
+			"revive":
+				# Pass the actual Unit reference (positions can shift slightly
+				# but the body's grid cell is stable; we still need the Unit
+				# pointer for queue_revive's path + arrival logic).
+				var rt = task.get("target_unit")
+				if rt != null and is_instance_valid(rt):
+					closest.queue_revive(rt)
 
 
 func toggle_brightness() -> void:
@@ -709,6 +1464,14 @@ func toggle_brightness() -> void:
 
 
 func _process(_delta: float) -> void:
+	# Run timer only counts pre-victory/defeat — once the run ends the
+	# summary panel freezes the elapsed time alongside the other stats.
+	# Threat baseline also pauses on game end so the bar stops creeping.
+	if wave_manager != null and "state" in wave_manager:
+		var st: int = int(wave_manager.state)
+		if st != 3 and st != 4:  # not VICTORY / DEFEAT
+			run_stats.run_time += _delta
+			threat_level += THREAT_BASELINE_PER_SEC * _delta
 	if gui.followed_unit != null:
 		$Camera2D.position = gui.followed_unit.position
 	#day_time = fmod(day_time + delta / DAY_DURATION, 1.0)
@@ -749,16 +1512,107 @@ func _handle_right_click() -> void:
 			continue
 		var occ: String = body.get_meta("occupier")
 		match occ:
-			"Rock":
-				if drafted.is_empty(): return
-				var rock_grid: Vector2 = body.get_meta("grid_pos")
-				var best := _best_unit(drafted, rock_grid)
-				var dest := _find_adjacent_to(rock_grid, best)
-				if dest == Vector2(-1, -1): return
-				var u_ref := best
+			"Tree":
+				# Drafted units → popup so right-click during tactical
+				# movement doesn't silently re-task them. Undrafted →
+				# auto-queue through the harvest-priority scheduler.
+				var tree_root_cell: Vector2 = body.get_meta("grid_pos")
+				for t in pending_tasks:
+					if t.type == "harvest" and t.pos == tree_root_cell:
+						return
+				if drafted.is_empty():
+					pending_tasks.append({"type": "harvest", "pos": tree_root_cell})
+					grid.set_task_marker(tree_root_cell, "harvest")
+					_assign_tasks()
+					return
+				var t_best := _best_unit(drafted, tree_root_cell)
+				var u_tree := t_best
 				_inspect_pending = func():
-					u_ref.draft_move_to(grid.gridToWorld(dest) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.85))
+					u_tree.queue_harvest(tree_root_cell)
+					grid.set_task_marker(tree_root_cell, "harvest")
+				_inspect_btn.text = "Harvest"
+				_loot_btn.visible = false
+				_inspect_popup.custom_minimum_size = Vector2(110, 36)
+				_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
+				_inspect_popup.visible = true
+				return
+			"Rock", "Ore":
+				# Drafted units → confirmation popup so a right-click in the
+				# middle of tactical movement doesn't silently yank the unit
+				# off into mining. Undrafted (worker-mode) → auto-queue via
+				# the priority dispatcher.
+				var rock_grid: Vector2 = body.get_meta("grid_pos")
+				for t in pending_tasks:
+					if t.type == "mine" and t.pos == rock_grid:
+						return
+				if drafted.is_empty():
+					pending_tasks.append({"type": "mine", "pos": rock_grid})
+					grid.set_task_marker(rock_grid, "mine")
+					_assign_tasks()
+					return
+				var best_miner := _best_unit(drafted, rock_grid)
+				var u_ref := best_miner
+				_inspect_pending = func():
+					u_ref.queue_mine(rock_grid)
+					grid.set_task_marker(rock_grid, "mine")
 				_inspect_btn.text = "Mine"
+				_loot_btn.visible = false
+				_inspect_popup.custom_minimum_size = Vector2(110, 36)
+				_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
+				_inspect_popup.visible = true
+				return
+			"Driftwood":
+				# Same drafted-vs-worker split as rocks: popup when drafted,
+				# auto-queue otherwise. (Auto-queue uses the harvest-priority
+				# scheduler so any free worker walks over.)
+				var dw_cell: Vector2 = body.get_meta("grid_pos")
+				if drafted.is_empty():
+					var dw_best_w: Unit = null
+					var dw_best_d_w: float = INF
+					for u in all_units:
+						if not is_instance_valid(u): continue
+						var un: Unit = u as Unit
+						if un.is_dead() or un.is_downed or un.evacuated: continue
+						var d: float = un.get_grid_pos().distance_to(dw_cell)
+						if d < dw_best_d_w:
+							dw_best_d_w = d
+							dw_best_w = un
+					if dw_best_w == null:
+						return
+					var dest_w: Vector2 = _find_adjacent_to(dw_cell, dw_best_w)
+					if dest_w == Vector2(-1, -1):
+						return
+					var cb_w := func():
+						var drops: Dictionary = grid.collect_driftwood(dw_cell)
+						if drops.is_empty():
+							return
+						for item_name: String in drops.keys():
+							dw_best_w.data.inventory[item_name] = int(dw_best_w.data.inventory.get(item_name, 0)) + int(drops[item_name])
+						if gui != null and gui.has_method("notify_loot_batch"):
+							var dw_world: Vector2 = grid.gridToWorld(dw_cell) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+							gui.notify_loot_batch(dw_world, drops)
+						notify_inventory_changed()
+					dw_best_w.inspect_move_to(dest_w, cb_w)
+					return
+				var dw_best := _best_unit(drafted, dw_cell)
+				var dw_dest := _find_adjacent_to(dw_cell, dw_best)
+				if dw_dest == Vector2(-1, -1):
+					return
+				var u_dw := dw_best
+				var cell_ref := dw_cell
+				_inspect_pending = func():
+					var pickup_cb := func():
+						var drops: Dictionary = grid.collect_driftwood(cell_ref)
+						if drops.is_empty():
+							return
+						for item_name: String in drops.keys():
+							u_dw.data.inventory[item_name] = int(u_dw.data.inventory.get(item_name, 0)) + int(drops[item_name])
+						if gui != null and gui.has_method("notify_loot_batch"):
+							var dw_world: Vector2 = grid.gridToWorld(cell_ref) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+							gui.notify_loot_batch(dw_world, drops)
+						notify_inventory_changed()
+					u_dw.draft_inspect_to(dw_dest, pickup_cb)
+				_inspect_btn.text = "Collect"
 				_loot_btn.visible = false
 				_inspect_popup.custom_minimum_size = Vector2(110, 36)
 				_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
@@ -808,6 +1662,112 @@ func _handle_right_click() -> void:
 				_show_inspect_popup(drafted, grid.monolith_pos, Vector2i(2, 2), "monolith")
 				return
 
+	# Right-click on a downed teammate → dispatch the closest live unit to
+	# revive them. Always works (regardless of draft state) since revival is
+	# a critical action — the player shouldn't have to draft first to save
+	# someone bleeding out next to them.
+	var downed_target: Unit = _downed_unit_at_world(mouse_world)
+	if downed_target != null:
+		var rescuer: Unit = _closest_live_unit_to(downed_target)
+		if rescuer != null:
+			rescuer.queue_revive(downed_target)
+		return
+
+	# Right-click on a Fabricator → open its craft panel. Built structures
+	# don't have collision bodies, so detect via the cell→building reverse
+	# map. No drafted-unit requirement — crafting is a base operation, not
+	# a unit task.
+	var click_cell: Vector2 = grid.worldToGrid(mouse_world)
+	if grid.cell_to_building.has(click_cell):
+		var built_anchor: Vector2 = grid.cell_to_building[click_cell]
+		if grid.fabricators.has(built_anchor):
+			gui.show_craft_panel(built_anchor)
+			return
+		# Right-click on a built Comm Relay Antenna → dispatch the closest
+		# live, non-channeling teammate to start the channeling sequence.
+		# Once they arrive and stay adjacent for RELAY_CHANNEL_DURATION,
+		# WaveManager.trigger_evac_from_relay() fires.
+		if grid.comm_relays.has(built_anchor):
+			var relay_state: Dictionary = grid.comm_relays[built_anchor]
+			if relay_state.get("completed", false):
+				return  # already used; the EVAC is on its way
+			var channeler: Unit = null
+			var best_d: float = INF
+			var anchor_world: Vector2 = grid.gridToWorld(built_anchor) + Vector2(grid.cell_size, grid.cell_size)
+			for u in all_units:
+				if not is_instance_valid(u):
+					continue
+				var unit_node: Unit = u as Unit
+				if unit_node.is_dead() or unit_node.is_downed or unit_node.evacuated:
+					continue
+				if unit_node.relay_target != Vector2(-1, -1):
+					continue
+				var d: float = unit_node.global_position.distance_to(anchor_world)
+				if d < best_d:
+					best_d = d
+					channeler = unit_node
+			if channeler != null:
+				channeler.queue_relay_channel(built_anchor)
+				gui.show_wave_banner("Calling for evac — defend the antenna!", 4.0)
+			return
+
+	# Right-click on a regrowing tree → tell the player it's not chop-ready.
+	# The countdown is intentionally hidden so the player has to read the
+	# sapling's visual size rather than watching a clock.
+	if not grid.regrowing_tree_at(click_cell).is_empty():
+		gui.show_wave_banner("Tree is still regrowing", 3.0)
+		return
+
+	# Right-click on a tree → harvest. Drafted units get a confirmation
+	# popup so a stray click during tactical movement doesn't re-task them;
+	# worker mode auto-queues via the harvest-priority scheduler.
+	if grid.tree_root.has(click_cell):
+		var tree_root: Vector2 = grid.get_tree_root(click_cell)
+		for t in pending_tasks:
+			if t.type == "harvest" and t.pos == tree_root:
+				return
+		if drafted.is_empty():
+			pending_tasks.append({"type": "harvest", "pos": tree_root})
+			grid.set_task_marker(tree_root, "harvest")
+			_assign_tasks()
+			return
+		var t_best := _best_unit(drafted, tree_root)
+		var u_tree := t_best
+		_inspect_pending = func():
+			u_tree.queue_harvest(tree_root)
+			grid.set_task_marker(tree_root, "harvest")
+		_inspect_btn.text = "Harvest"
+		_loot_btn.visible = false
+		_inspect_popup.custom_minimum_size = Vector2(110, 36)
+		_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
+		_inspect_popup.visible = true
+		return
+
+	# Right-click on a damaged wall → dispatch the closest drafted unit to
+	# repair it. Walls are Sprite2D-based, no collider, so they're invisible
+	# to the physics query above; check via the cell→building reverse map.
+	if not drafted.is_empty():
+		if grid.cell_to_building.has(click_cell):
+			var anchor: Vector2 = grid.cell_to_building[click_cell]
+			if grid.buildings.has(anchor):
+				var b_state: Dictionary = grid.buildings[anchor]
+				if int(b_state.hp) < int(b_state.max_hp):
+					var best_repair: Unit = _best_unit(drafted, anchor) as Unit
+					if best_repair != null:
+						best_repair.queue_repair(anchor)
+						grid.set_task_marker(anchor, "repair")
+					return
+
+	# Right-click on a crab → explicit attack target for all drafted units.
+	# Crabs are Node2Ds with no collision shape, so the physics query above misses
+	# them; check by distance to the cell-center anchor instead.
+	if not drafted.is_empty():
+		var crab_target: Node = _crab_at_world(mouse_world)
+		if crab_target != null:
+			for u_attack in drafted:
+				(u_attack as Unit).attack_target(crab_target)
+			return
+
 	# No physics hit — move drafted units to navigable ground
 	var grid_pos := grid.worldToGrid(mouse_world)
 	if not grid.grid.has(grid_pos):
@@ -816,6 +1776,103 @@ func _handle_right_click() -> void:
 		var targets := _world_formation(mouse_world, drafted.size())
 		for i in drafted.size():
 			drafted[i].draft_move_to(targets[i])
+
+
+func _crab_at_world(mouse_world: Vector2) -> Node:
+	# Click radius: half a tile is forgiving but not so big it triggers on empty
+	# beach cells next to a crab.
+	var hit_radius: float = float(grid.cell_size) * 0.5
+	var best: Node = null
+	var best_d: float = hit_radius
+	for c in grid.crabs:
+		if not is_instance_valid(c):
+			continue
+		if c.has_method("is_dead") and c.is_dead():
+			continue
+		var center: Vector2 = c.global_position + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+		var d: float = mouse_world.distance_to(center)
+		if d < best_d:
+			best_d = d
+			best = c
+	return best
+
+
+# Closest downed Unit within a forgiving click radius around `mouse_world`.
+# The lying body's visual centre sits a bit above the unit's feet anchor —
+# offset accounts for that so the click target matches the rendered sprite.
+func _downed_unit_at_world(mouse_world: Vector2) -> Unit:
+	var hit_radius: float = float(grid.cell_size) * 0.7
+	var best: Unit = null
+	var best_d: float = hit_radius
+	for u in all_units:
+		if not is_instance_valid(u) or not u.is_downed:
+			continue
+		var center: Vector2 = u.global_position + Vector2(0.0, -float(grid.cell_size) * 0.4)
+		var d: float = mouse_world.distance_to(center)
+		if d < best_d:
+			best_d = d
+			best = u
+	return best
+
+
+# Tear down a blueprint that hasn't finished construction and refund any
+# materials already committed to it. Drops a loot toast over the spot so
+# the player sees the refund and knows it's done.
+func _cancel_blueprint_with_refund(anchor: Vector2) -> void:
+	# Drop the build task from any pending queue + clear any unit currently
+	# en route or mid-build (so they don't keep ticking on a ghost target).
+	pending_tasks = pending_tasks.filter(func(t): return not (t.type == "build" and t.pos == anchor))
+	for u in all_units:
+		if not is_instance_valid(u):
+			continue
+		if u.build_target == anchor:
+			u.build_target = Vector2(-1, -1)
+			u._build_timer = -1.0
+	var refund: Dictionary = grid.cancel_blueprint(anchor)
+	if refund.is_empty():
+		return
+	# Auto-deposit refund into the closest live, non-downed unit so the
+	# materials immediately re-enter the team pool.
+	var anchor_world: Vector2 = grid.gridToWorld(anchor) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+	var recipient: Unit = null
+	var best_d: float = INF
+	for u in all_units:
+		if not is_instance_valid(u) or u.is_dead() or u.is_downed:
+			continue
+		var d: float = u.global_position.distance_to(anchor_world)
+		if d < best_d:
+			best_d = d
+			recipient = u
+	if recipient != null:
+		for item_name in refund.keys():
+			recipient.data.inventory[item_name] = int(recipient.data.inventory.get(item_name, 0)) + int(refund[item_name])
+	if gui != null and gui.has_method("notify_loot_batch"):
+		gui.notify_loot_batch(anchor_world, refund)
+	notify_inventory_changed()
+
+
+# Closest still-standing teammate to dispatch toward `target`. Selected units
+# get first pick (player intent — "use this guy"), then any other live unit.
+func _closest_live_unit_to(target: Unit) -> Unit:
+	var best: Unit = null
+	var best_d: float = INF
+	for u in selected_units:
+		if u == target or u.is_downed:
+			continue
+		var d: float = u.global_position.distance_to(target.global_position)
+		if d < best_d:
+			best_d = d
+			best = u
+	if best != null:
+		return best
+	for u in all_units:
+		if u == target or u.is_downed:
+			continue
+		var d: float = u.global_position.distance_to(target.global_position)
+		if d < best_d:
+			best_d = d
+			best = u
+	return best
 
 
 func _best_unit(drafted: Array, anchor: Vector2) -> Unit:
@@ -994,9 +2051,19 @@ func _is_adjacent_to(unit_grid: Vector2, anchor: Vector2, size: Vector2i = Vecto
 
 
 func _find_adjacent_to(anchor: Vector2, unit: Unit, size: Vector2i = Vector2i(1, 1)) -> Vector2:
+	var ref := unit.get_grid_pos()
+	# Fast path: if the unit is already standing on a perimeter cell, return
+	# that cell directly. Otherwise the closest-by-Euclidean pick can land
+	# on a different ring tile (e.g., the diagonal next to where the unit
+	# stands), which forces a one-cell shuffle for no reason.
+	for dx in range(-1, size.x + 1):
+		for dy in range(-1, size.y + 1):
+			if dx >= 0 and dx < size.x and dy >= 0 and dy < size.y:
+				continue
+			if anchor + Vector2(dx, dy) == ref and grid.grid.has(ref) and grid.grid[ref].navigable:
+				return ref
 	var best := Vector2(-1, -1)
 	var best_dist := INF
-	var ref := unit.get_grid_pos()
 	for dx in range(-1, size.x + 1):
 		for dy in range(-1, size.y + 1):
 			if dx >= 0 and dx < size.x and dy >= 0 and dy < size.y:

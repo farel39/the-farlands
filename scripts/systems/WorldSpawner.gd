@@ -27,6 +27,74 @@ static func _make_light_texture() -> GradientTexture2D:
 	return tex
 
 
+# Spawn a single tree at the given root cell. Used by spawn_trees during world
+# init and by Grid's regrowth tick when a chopped tree finishes regrowing. Marks
+# the 3x3 footprint as Tree-occupied + non-navigable, registers the tree's
+# sprite + collision body + bioluminescent light in the Grid's tracking dicts.
+# Returns the main sprite so the caller can keep a reference if needed.
+static func spawn_one_tree(g: Grid, root: Vector2, texture: Texture2D) -> Sprite2D:
+	var sp: Node2D = g.sprite_layer if g.sprite_layer != null else g
+	var centre_pos: Vector2 = g.gridToWorld(root) + Vector2(g.cell_size * 1.5, g.cell_size * 1.5)
+	var tree_s: float = float(g.cell_size * 3) / float(texture.get_width())
+
+	var shadow := Sprite2D.new()
+	shadow.texture = texture
+	shadow.position = centre_pos + Vector2(g.cell_size * 0.15, g.cell_size * 0.7)
+	shadow.scale = Vector2(tree_s * 1.1, tree_s * 0.22)
+	shadow.modulate = Color(0, 0, 0, 0.35)
+	shadow.z_index = -1
+	sp.add_child(shadow)
+	g.shadow_sprites.append(shadow)
+
+	var sprite := Sprite2D.new()
+	sprite.texture = texture
+	sprite.position = centre_pos
+	sprite.scale = Vector2(tree_s, tree_s)
+	sprite.z_index = int(root.y) + 2
+	sp.add_child(sprite)
+	g.tree_sprites[root] = sprite
+
+	var tree_img: Image = texture.get_image()
+	var tree_bm := BitMap.new()
+	tree_bm.create_from_image_alpha(tree_img)
+	var tree_polys := tree_bm.opaque_to_polygons(Rect2(Vector2.ZERO, tree_img.get_size()), 2.0)
+	if not tree_polys.is_empty():
+		var tree_body := StaticBody2D.new()
+		tree_body.position = centre_pos
+		# Tag for the right-click physics query so clicking anywhere on the
+		# tree (including canopy that overhangs neighboring grid cells)
+		# resolves back to its root, not just clicks on the trunk's tile.
+		tree_body.set_meta("occupier", "Tree")
+		tree_body.set_meta("grid_pos", root)
+		var tree_origin := Vector2(tree_img.get_width() * 0.5, tree_img.get_height() * 0.5)
+		for poly: PackedVector2Array in tree_polys:
+			var cp := CollisionPolygon2D.new()
+			var scaled := PackedVector2Array()
+			for pt: Vector2 in poly:
+				scaled.append((pt - tree_origin) * tree_s)
+			cp.polygon = scaled
+			tree_body.add_child(cp)
+		sp.add_child(tree_body)
+
+	var light := PointLight2D.new()
+	light.texture = _make_light_texture()
+	light.color = Color(0.3, 1.0, 0.7)
+	light.energy = 0.0
+	light.texture_scale = 4.5 / tree_s
+	light.position = centre_pos
+	sp.add_child(light)
+	g.tree_lights.append(light)
+	g.tree_lights_by_root[root] = light
+
+	for dx in 3:
+		for dy in 3:
+			var c: Vector2 = root + Vector2(dx, dy)
+			g.grid[c].occupier = "Tree"
+			g.grid[c].navigable = false
+			g.tree_root[c] = root
+	return sprite
+
+
 static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 	var tree_textures: Array = [
 		load("res://art/environment/alien lily pad tree var 1 rev.png"),
@@ -197,7 +265,9 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 		sp.add_child(light)
 		g.tree_lights.append(light)
 		g.tree_lights_by_root[pos] = light
-		g.tree_sprites[pos] = pos  # sentinel so harvest checks still work
+		# (Note: tree_sprites[pos] was set above to the actual Sprite2D — must
+		# stay that way so harvest_tree can free it + capture the texture for
+		# the regrowth sapling.)
 
 		var lily_candidates: Array = local_dirt.keys()
 		lily_candidates.shuffle()
@@ -393,7 +463,6 @@ static func spawn_crash_site(g: Grid) -> void:
 				["Rations", rng.randi_range(2, 5)],
 				["Bandages", rng.randi_range(1, 3)],
 				["Tools", rng.randi_range(1, 2)],
-				["Ammo", rng.randi_range(3, 6)],
 				["Metal Scrap", rng.randi_range(1, 3)],
 			]
 			all_loot.shuffle()
@@ -502,6 +571,7 @@ static func spawn_driftwood(g: Grid) -> void:
 		sprite.z_index = int(cell.y) + 1
 		g.add_child(sprite)
 
+		var dw_body_ref: StaticBody2D = null
 		var dw_img: Image = tex.get_image()
 		var dw_bm := BitMap.new()
 		dw_bm.create_from_image_alpha(dw_img)
@@ -509,6 +579,10 @@ static func spawn_driftwood(g: Grid) -> void:
 		if not dw_polys.is_empty():
 			var dw_body := StaticBody2D.new()
 			dw_body.position = pos
+			# Tag the body so the right-click physics query can identify the
+			# driftwood and resolve back to its cell for collection.
+			dw_body.set_meta("occupier", "Driftwood")
+			dw_body.set_meta("grid_pos", cell)
 			var dw_origin := Vector2(dw_img.get_width() * 0.5, dw_img.get_height() * 0.5)
 			for poly: PackedVector2Array in dw_polys:
 				var dcp := CollisionPolygon2D.new()
@@ -518,9 +592,13 @@ static func spawn_driftwood(g: Grid) -> void:
 				dcp.polygon = scaled
 				dw_body.add_child(dcp)
 			g.add_child(dw_body)
+			dw_body_ref = dw_body
 
 		g.grid[cell].occupier = "Driftwood"
 		g.grid[cell].navigable = false
+		# Track per-cell so collect_driftwood can free just this pile when a
+		# unit picks it up.
+		g.driftwood_nodes[cell] = {"sprite": sprite, "shadow": shadow, "body": dw_body_ref}
 		placed_cells.append(cell)
 		placed += 1
 
@@ -592,6 +670,7 @@ static func spawn_rocks(g: Grid) -> void:
 			sprite.z_index = int(center_pos.y / g.cell_size)
 			g.add_child(sprite)
 
+			var body_ref: StaticBody2D = null
 			# Build a pixel-perfect StaticBody2D from the sprite's alpha channel.
 			var image: Image = (tex as Texture2D).get_image()
 			var bm := BitMap.new()
@@ -612,6 +691,9 @@ static func spawn_rocks(g: Grid) -> void:
 					cp.polygon = scaled
 					body.add_child(cp)
 				g.add_child(body)
+				body_ref = body
+			# Track per-cell so Grid.mine_rock can clean up just this rock.
+			g.rock_nodes[cell] = {"sprite": sprite, "shadow": shadow, "body": body_ref}
 
 		if rng.randf() > 0.3:
 			continue
@@ -841,7 +923,11 @@ static func spawn_tide_pools(g: Grid) -> void:
 			used_ore_cells[gc] = true
 			g.grid[gc].occupier = "Ore"
 			g.grid[gc].navigable = false
-			var ore_tex: Texture2D = iron_tex if used_ore_cells.size() <= ore_count else copper_tex
+			# Track whether this is iron-heavy or copper-heavy so mine_at can
+			# roll drops appropriately. First half of the count = iron, rest
+			# = copper, matching the texture choice below.
+			var is_iron: bool = used_ore_cells.size() <= ore_count
+			var ore_tex: Texture2D = iron_tex if is_iron else copper_tex
 			var ore_pos2: Vector2 = g.gridToWorld(gc) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
 
 			var ore_scale := float(g.cell_size) * 0.9 / float(ore_tex.get_height())
@@ -861,6 +947,7 @@ static func spawn_tide_pools(g: Grid) -> void:
 			ore_sprite.z_index = int(gc.y) + 1
 			g.add_child(ore_sprite)
 
+			var ore_body_ref: StaticBody2D = null
 			var ore_img: Image = ore_tex.get_image()
 			var ore_bm := BitMap.new()
 			ore_bm.create_from_image_alpha(ore_img)
@@ -868,6 +955,9 @@ static func spawn_tide_pools(g: Grid) -> void:
 			if not ore_polys.is_empty():
 				var ore_body := StaticBody2D.new()
 				ore_body.position = ore_pos2
+				# Tag for right-click physics query — same convention as Rock.
+				ore_body.set_meta("occupier", "Ore")
+				ore_body.set_meta("grid_pos", gc)
 				var ore_origin := Vector2(ore_img.get_width() * 0.5, ore_img.get_height() * 0.5)
 				for poly: PackedVector2Array in ore_polys:
 					var ocp := CollisionPolygon2D.new()
@@ -877,6 +967,16 @@ static func spawn_tide_pools(g: Grid) -> void:
 					ocp.polygon = scaled
 					ore_body.add_child(ocp)
 				g.add_child(ore_body)
+				ore_body_ref = ore_body
+			# Track per-cell so mine_at can clean up when the ore is consumed,
+			# plus remember which kind of ore so the drop roll picks the
+			# matching primary metal.
+			g.ore_nodes[gc] = {
+				"sprite": ore_sprite,
+				"shadow": ore_shadow,
+				"body": ore_body_ref,
+				"kind": "iron" if is_iron else "copper",
+			}
 
 
 static func spawn_monolith(g: Grid) -> void:
@@ -970,9 +1070,25 @@ static func spawn_monolith(g: Grid) -> void:
 	g.red_tree_lights.append(light)
 
 
+# Attach the cyan eye-glow PointLight2D to a freshly-spawned crab. Registers
+# the light in g.crab_lights so the day/night cycle controller fades it in
+# at night alongside the ambient crabs. Used by WaveManager._spawn_wave_crab
+# and EventManager._spawn_creature so wave / event creatures aren't visually
+# distinct from peacetime ambient ones.
+static func attach_crab_light(g: Grid, crab: Node2D) -> void:
+	var light := PointLight2D.new()
+	light.texture = _make_light_texture()
+	light.color = Color(0.2, 0.9, 1.0)
+	light.energy = 0.0
+	light.texture_scale = 2.5
+	light.position = Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+	crab.add_child(light)
+	g.crab_lights.append(light)
+
+
 static func spawn_crabs(g: Grid) -> void:
-	var tex_down := load("res://art/characters/alien beach crab downward.png") as Texture2D
-	var tex_side := load("res://art/characters/alien beach crab sideway left.png") as Texture2D
+	var tex_down := load("res://art/enemies/alien crab facing up.png") as Texture2D
+	var tex_side := load("res://art/enemies/alien crab sideway facing left.png") as Texture2D
 	var crab_scene := load("res://scenes/Crab.tscn") as PackedScene
 
 	const COUNT := 10
