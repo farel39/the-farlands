@@ -1188,3 +1188,482 @@ static func _spawn_ambient_band(g: Grid, crab_scene: PackedScene, light_tex: Tex
 		g.crab_lights.append(light)
 
 		spawned += 1
+
+
+# ── World restoration (save/load) ─────────────────────────────────────────────
+#
+# Each restore_X function rebuilds visuals and grid bookkeeping from a
+# saved data array, skipping the random selection logic in spawn_X. Used
+# by Grid.apply_world during save loading. The saved arrays are produced
+# by Grid.serialize_world.
+#
+# Texture variants are referenced by INDEX (0-based) into the TEXTURES_*
+# arrays defined here so saves stay portable across asset re-orderings
+# as long as we don't reshuffle these registries. If you add a new
+# variant, append it to keep existing save indices valid.
+
+const TREE_TEXTURE_PATHS: Array = [
+	"res://art/environment/alien lily pad tree var 1 rev.png",
+	"res://art/environment/alien lily pad tree var 1 rev.png",
+]
+const ROCK_TEXTURE_PATHS: Array = [
+	"res://art/environment/rock light realistic 1.png",
+	"res://art/environment/rock light realistic 2.png",
+]
+const DRIFTWOOD_TEXTURE_PATHS: Array = [
+	"res://art/environment/driftwood 1.png",
+	"res://art/environment/driftwood 2.png",
+	"res://art/environment/driftwood 3.png",
+	"res://art/environment/driftwood 4.png",
+	"res://art/environment/driftwood 5.png",
+]
+
+
+# Trees — reuses the existing per-tree primitive `spawn_one_tree` and
+# additionally writes the dirt biome from the saved tile dict so the
+# trunk-base sand patches render under each tree exactly as they did
+# before saving.
+static func restore_trees(g: Grid, trees_data: Array) -> void:
+	for entry_v: Variant in trees_data:
+		var entry: Dictionary = entry_v as Dictionary
+		var root: Vector2 = Vector2(int(entry.get("x", 0)), int(entry.get("y", 0)))
+		var tex_idx: int = clamp(int(entry.get("tex", 0)), 0, TREE_TEXTURE_PATHS.size() - 1)
+		var tex: Texture2D = load(TREE_TEXTURE_PATHS[tex_idx]) as Texture2D
+		if tex == null:
+			continue
+		spawn_one_tree(g, root, tex)
+
+
+# Dirt biome cells — `dirt_tiles` dict is rebuilt by the caller before
+# this runs; this just handles the visual sprite layer (with shader-
+# masked fade based on neighbours). Mirrors the lower half of
+# spawn_trees but skipping the tree placement loop.
+static func restore_dirt(g: Grid) -> void:
+	var sp: Node2D = g.sprite_layer if g.sprite_layer != null else g
+	var dirt_tex := load("res://art/environment/alien dirt 3.png")
+	var dirt_base_mat := load("res://data/materials/dirt_round.tres") as ShaderMaterial
+	for c in g.dirt_tiles:
+		var mask := 0
+		if g.dirt_tiles.has(c + Vector2(0, -1)): mask |= 1
+		if g.dirt_tiles.has(c + Vector2(1,  0)): mask |= 2
+		if g.dirt_tiles.has(c + Vector2(0,  1)): mask |= 4
+		if g.dirt_tiles.has(c + Vector2(-1, 0)): mask |= 8
+		var diag := 0
+		if g.dirt_tiles.has(c + Vector2( 1, -1)): diag |= 1
+		if g.dirt_tiles.has(c + Vector2( 1,  1)): diag |= 2
+		if g.dirt_tiles.has(c + Vector2(-1,  1)): diag |= 4
+		if g.dirt_tiles.has(c + Vector2(-1, -1)): diag |= 8
+		var dirt_sprite := Sprite2D.new()
+		dirt_sprite.texture = dirt_tex
+		dirt_sprite.position = g.gridToWorld(c) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+		dirt_sprite.scale = Vector2(1.0, 1.0)
+		if mask < 15 or diag < 15:
+			var mat: ShaderMaterial = dirt_base_mat.duplicate()
+			mat.set_shader_parameter("cardinal_mask", mask)
+			mat.set_shader_parameter("diag_mask", diag)
+			mat.set_shader_parameter("fade_width", 0.55)
+			dirt_sprite.material = mat
+		sp.add_child(dirt_sprite)
+
+
+# Rocks — single-cell, light variant 1 or 2. Inlined from spawn_rocks
+# without the cluster-pick / random-count logic.
+static func restore_rocks(g: Grid, rocks_data: Array) -> void:
+	for entry_v: Variant in rocks_data:
+		var entry: Dictionary = entry_v as Dictionary
+		var cell: Vector2 = Vector2(int(entry.get("x", 0)), int(entry.get("y", 0)))
+		var tex_idx: int = clamp(int(entry.get("tex", 0)), 0, ROCK_TEXTURE_PATHS.size() - 1)
+		var tex: Texture2D = load(ROCK_TEXTURE_PATHS[tex_idx]) as Texture2D
+		if tex == null:
+			continue
+		g.grid[cell].occupier = "Rock"
+		g.grid[cell].navigable = false
+		var center_pos := g.gridToWorld(cell) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+		var rock_scale := float(g.cell_size) * 0.8 / float(tex.get_height())
+		var shadow := Sprite2D.new()
+		shadow.texture = tex
+		shadow.position = center_pos + Vector2(8, 10)
+		shadow.scale = Vector2(rock_scale * 1.15, rock_scale * 0.45)
+		shadow.modulate = Color(0, 0, 0, 0.35)
+		g.add_child(shadow)
+		g.shadow_sprites.append(shadow)
+		var sprite := Sprite2D.new()
+		sprite.texture = tex
+		sprite.position = center_pos
+		sprite.scale = Vector2(rock_scale, rock_scale)
+		sprite.z_index = int(cell.y) + 1
+		g.add_child(sprite)
+		var img: Image = _alpha_image(tex)
+		var bm := BitMap.new()
+		bm.create_from_image_alpha(img)
+		var polys := bm.opaque_to_polygons(Rect2(Vector2.ZERO, img.get_size()), 2.0)
+		var body_ref: StaticBody2D = null
+		if not polys.is_empty():
+			var body := StaticBody2D.new()
+			body.position = center_pos
+			body.set_meta("occupier", "Rock")
+			body.set_meta("grid_pos", cell)
+			var origin := Vector2(img.get_width() * 0.5, img.get_height() * 0.5)
+			for poly: PackedVector2Array in polys:
+				var cp := CollisionPolygon2D.new()
+				var scaled := PackedVector2Array()
+				for pt: Vector2 in poly:
+					scaled.append((pt - origin) * rock_scale)
+				cp.polygon = Geometry2D.convex_hull(scaled)
+				body.add_child(cp)
+			g.add_child(body)
+			body_ref = body
+		g.rock_nodes[cell] = {"sprite": sprite, "shadow": shadow, "body": body_ref}
+
+
+# Ore veins — single-cell, kind = "iron" or "copper". Grid.spawn_ores
+# (called from spawn_tide_pools) does similar visuals; this is the
+# minimal restore variant.
+static func restore_ores(g: Grid, ores_data: Array) -> void:
+	const IRON_TEX_PATH := "res://art/environment/iron ore vein.png"
+	const COPPER_TEX_PATH := "res://art/environment/copper ore vein.png"
+	for entry_v: Variant in ores_data:
+		var entry: Dictionary = entry_v as Dictionary
+		var cell: Vector2 = Vector2(int(entry.get("x", 0)), int(entry.get("y", 0)))
+		var kind: String = String(entry.get("kind", "iron"))
+		var path: String = COPPER_TEX_PATH if kind == "copper" else IRON_TEX_PATH
+		var tex: Texture2D = load(path) as Texture2D
+		if tex == null:
+			continue
+		g.grid[cell].occupier = "Ore"
+		g.grid[cell].navigable = false
+		var center_pos := g.gridToWorld(cell) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+		var ore_scale := float(g.cell_size) * 0.85 / float(tex.get_width())
+		var shadow := Sprite2D.new()
+		shadow.texture = tex
+		shadow.position = center_pos + Vector2(6, 8)
+		shadow.scale = Vector2(ore_scale * 1.1, ore_scale * 0.4)
+		shadow.modulate = Color(0, 0, 0, 0.35)
+		g.add_child(shadow)
+		g.shadow_sprites.append(shadow)
+		var sprite := Sprite2D.new()
+		sprite.texture = tex
+		sprite.position = center_pos
+		sprite.scale = Vector2(ore_scale, ore_scale)
+		sprite.z_index = int(cell.y) + 1
+		g.add_child(sprite)
+		var img: Image = _alpha_image(tex)
+		var bm := BitMap.new()
+		bm.create_from_image_alpha(img)
+		var polys := bm.opaque_to_polygons(Rect2(Vector2.ZERO, img.get_size()), 2.0)
+		var body_ref: StaticBody2D = null
+		if not polys.is_empty():
+			var body := StaticBody2D.new()
+			body.position = center_pos
+			body.set_meta("occupier", "Ore")
+			body.set_meta("grid_pos", cell)
+			body.set_meta("kind", kind)
+			var origin := Vector2(img.get_width() * 0.5, img.get_height() * 0.5)
+			for poly: PackedVector2Array in polys:
+				var ocp := CollisionPolygon2D.new()
+				var scaled := PackedVector2Array()
+				for pt: Vector2 in poly:
+					scaled.append((pt - origin) * ore_scale)
+				ocp.polygon = Geometry2D.convex_hull(scaled)
+				body.add_child(ocp)
+			g.add_child(body)
+			body_ref = body
+		g.ore_nodes[cell] = {"sprite": sprite, "shadow": shadow, "body": body_ref, "kind": kind}
+
+
+# Driftwood piles — 5 tex variants, no random rotation/orientation.
+static func restore_driftwood(g: Grid, dw_data: Array) -> void:
+	for entry_v: Variant in dw_data:
+		var entry: Dictionary = entry_v as Dictionary
+		var cell: Vector2 = Vector2(int(entry.get("x", 0)), int(entry.get("y", 0)))
+		var tex_idx: int = clamp(int(entry.get("tex", 0)), 0, DRIFTWOOD_TEXTURE_PATHS.size() - 1)
+		var tex: Texture2D = load(DRIFTWOOD_TEXTURE_PATHS[tex_idx]) as Texture2D
+		if tex == null:
+			continue
+		var longest := float(max(tex.get_width(), tex.get_height()))
+		var s := float(g.cell_size) * 1.5 / longest
+		var pos := g.gridToWorld(cell) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+		var shadow := Sprite2D.new()
+		shadow.texture = tex
+		shadow.scale = Vector2(s * 1.1, s * 0.55)
+		shadow.position = pos + Vector2(14, 16)
+		shadow.modulate = Color(0, 0, 0, 0.3)
+		g.add_child(shadow)
+		g.shadow_sprites.append(shadow)
+		var sprite := Sprite2D.new()
+		sprite.texture = tex
+		sprite.scale = Vector2(s, s)
+		sprite.position = pos
+		sprite.z_index = int(cell.y) + 1
+		g.add_child(sprite)
+		var dw_body_ref: StaticBody2D = null
+		var dw_img: Image = _alpha_image(tex)
+		var dw_bm := BitMap.new()
+		dw_bm.create_from_image_alpha(dw_img)
+		var dw_polys := dw_bm.opaque_to_polygons(Rect2(Vector2.ZERO, dw_img.get_size()), 2.0)
+		if not dw_polys.is_empty():
+			var dw_body := StaticBody2D.new()
+			dw_body.position = pos
+			dw_body.set_meta("occupier", "Driftwood")
+			dw_body.set_meta("grid_pos", cell)
+			var dw_origin := Vector2(dw_img.get_width() * 0.5, dw_img.get_height() * 0.5)
+			for poly: PackedVector2Array in dw_polys:
+				var dcp := CollisionPolygon2D.new()
+				var scaled := PackedVector2Array()
+				for pt: Vector2 in poly:
+					scaled.append((pt - dw_origin) * s)
+				dcp.polygon = Geometry2D.convex_hull(scaled)
+				dw_body.add_child(dcp)
+			g.add_child(dw_body)
+			dw_body_ref = dw_body
+		g.grid[cell].occupier = "Driftwood"
+		g.grid[cell].navigable = false
+		g.driftwood_nodes[cell] = {"sprite": sprite, "shadow": shadow, "body": dw_body_ref}
+
+
+# Monolith — single 2x2 unique structure.
+static func restore_monolith(g: Grid, pos: Vector2) -> void:
+	var tex := load("res://art/environment/sand monolith realistic.png") as Texture2D
+	if tex == null:
+		return
+	const TILES := 2
+	for dx in TILES:
+		for dy in TILES:
+			var c := pos + Vector2(dx, dy)
+			if g.grid.has(c):
+				g.grid[c].occupier = "Monolith"
+				g.grid[c].navigable = false
+	g.monolith_pos = pos
+	var centre_world := g.gridToWorld(pos) + Vector2(g.cell_size * TILES * 0.5, g.cell_size * TILES * 0.5)
+	var s := float(TILES * g.cell_size) / float(tex.get_width())
+	var shadow := Sprite2D.new()
+	shadow.texture = tex
+	shadow.scale = Vector2(s * 1.1, s * 0.5)
+	shadow.position = centre_world + Vector2(20, 28)
+	shadow.modulate = Color(0, 0, 0, 0.35)
+	g.add_child(shadow)
+	g.shadow_sprites.append(shadow)
+	var sprite := Sprite2D.new()
+	sprite.texture = tex
+	sprite.scale = Vector2(s, s)
+	sprite.position = centre_world
+	sprite.z_index = int(pos.y) + TILES
+	g.add_child(sprite)
+	var mono_img: Image = _alpha_image(tex)
+	var mono_bm := BitMap.new()
+	mono_bm.create_from_image_alpha(mono_img)
+	var mono_polys := mono_bm.opaque_to_polygons(Rect2(Vector2.ZERO, mono_img.get_size()), 2.0)
+	if not mono_polys.is_empty():
+		var mono_body := StaticBody2D.new()
+		mono_body.position = centre_world
+		var mono_origin := Vector2(mono_img.get_width() * 0.5, mono_img.get_height() * 0.5)
+		for poly: PackedVector2Array in mono_polys:
+			var mcp := CollisionPolygon2D.new()
+			var scaled := PackedVector2Array()
+			for pt: Vector2 in poly:
+				scaled.append((pt - mono_origin) * s)
+			mcp.polygon = Geometry2D.convex_hull(scaled)
+			mono_body.add_child(mcp)
+		mono_body.set_meta("occupier", "Monolith")
+		g.add_child(mono_body)
+	var glow_tex := _make_light_texture()
+	var glow := Sprite2D.new()
+	glow.texture = glow_tex
+	glow.modulate = Color(0.5, 0.1, 1.0, 0.25)
+	var glow_size := float(g.cell_size * 3)
+	glow.scale = Vector2(glow_size / 256.0, glow_size / 256.0)
+	glow.position = centre_world
+	glow.z_index = 0
+	g.add_child(glow)
+	var light := PointLight2D.new()
+	light.texture = _make_light_texture()
+	light.color = Color(0.55, 0.1, 1.0)
+	light.energy = 0.0
+	light.texture_scale = 5.0
+	sprite.add_child(light)
+	g.red_tree_lights.append(light)
+
+
+# Crash site — ship hull (4x4), hull fragment debris, supply crates with
+# inventories. Each list entry maps to a saved Vector2 cell + (for
+# crates) the inventory dict at save time.
+static func restore_crash_site(g: Grid, ship_pos: Vector2, hulls: Array, crates: Array, ship_inventory: Dictionary) -> void:
+	if ship_pos == Vector2(-1, -1):
+		return
+	const SHIP_TILES := 4
+	g.crash_site_pos = ship_pos
+	g.ship_inventory = ship_inventory.duplicate(true)
+	# Ship body (4x4 footprint, occupier + nav cleared).
+	for dx in SHIP_TILES:
+		for dy in SHIP_TILES:
+			var c := ship_pos + Vector2(dx, dy)
+			if g.grid.has(c):
+				g.grid[c].occupier = "CrashedShip"
+				g.grid[c].navigable = false
+	var ship_tex := load("res://art/crash_site/crashed ship.png") as Texture2D
+	if ship_tex != null:
+		var ship_world := g.gridToWorld(ship_pos) + Vector2(g.cell_size * SHIP_TILES * 0.5, g.cell_size * SHIP_TILES * 0.5)
+		var s_scale := float(SHIP_TILES * g.cell_size) / float(ship_tex.get_width())
+		var ship_shadow := Sprite2D.new()
+		ship_shadow.texture = ship_tex
+		ship_shadow.scale = Vector2(s_scale * 1.05, s_scale * 0.4)
+		ship_shadow.position = ship_world + Vector2(g.cell_size * 0.4, g.cell_size * 0.7)
+		ship_shadow.modulate = Color(0, 0, 0, 0.4)
+		g.add_child(ship_shadow)
+		g.shadow_sprites.append(ship_shadow)
+		var ship_sprite := Sprite2D.new()
+		ship_sprite.texture = ship_tex
+		ship_sprite.scale = Vector2(s_scale, s_scale)
+		ship_sprite.position = ship_world
+		ship_sprite.z_index = int(ship_pos.y) + SHIP_TILES
+		g.add_child(ship_sprite)
+		var ship_img: Image = _alpha_image(ship_tex)
+		var ship_bm := BitMap.new()
+		ship_bm.create_from_image_alpha(ship_img)
+		var ship_polys := ship_bm.opaque_to_polygons(Rect2(Vector2.ZERO, ship_img.get_size()), 2.0)
+		if not ship_polys.is_empty():
+			var ship_body := StaticBody2D.new()
+			ship_body.position = ship_world
+			ship_body.set_meta("occupier", "CrashedShip")
+			ship_body.set_meta("grid_pos", ship_pos)
+			var ship_pts := PackedVector2Array()
+			var origin := Vector2(ship_img.get_width() * 0.5, ship_img.get_height() * 0.5)
+			for poly: PackedVector2Array in ship_polys:
+				for pt: Vector2 in poly:
+					ship_pts.append((pt - origin) * s_scale)
+			var ship_cp := CollisionPolygon2D.new()
+			ship_cp.polygon = Geometry2D.convex_hull(ship_pts)
+			ship_body.add_child(ship_cp)
+			g.add_child(ship_body)
+	# Hull fragments — 1x1 cell debris around the ship.
+	var hull_tex := load("res://art/crash_site/crashed ship hull large.png") as Texture2D
+	if hull_tex != null:
+		var hull_scale := float(g.cell_size) / float(max(hull_tex.get_width(), hull_tex.get_height()))
+		for hp_v: Variant in hulls:
+			var hp_dict: Dictionary = hp_v as Dictionary
+			var hp: Vector2 = Vector2(int(hp_dict.get("x", 0)), int(hp_dict.get("y", 0)))
+			if not g.grid.has(hp):
+				continue
+			g.grid[hp].occupier = "HullFragment"
+			g.grid[hp].navigable = false
+			var hp_world := g.gridToWorld(hp) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+			var hull_shadow := Sprite2D.new()
+			hull_shadow.texture = hull_tex
+			hull_shadow.scale = Vector2(hull_scale * 1.05, hull_scale * 0.5)
+			hull_shadow.position = hp_world + Vector2(8, 10)
+			hull_shadow.modulate = Color(0, 0, 0, 0.35)
+			g.add_child(hull_shadow)
+			g.shadow_sprites.append(hull_shadow)
+			var hull_sprite := Sprite2D.new()
+			hull_sprite.texture = hull_tex
+			hull_sprite.scale = Vector2(hull_scale, hull_scale)
+			hull_sprite.position = hp_world
+			hull_sprite.z_index = int(hp.y) + 1
+			g.add_child(hull_sprite)
+			var hull_img: Image = _alpha_image(hull_tex)
+			var hull_bm := BitMap.new()
+			hull_bm.create_from_image_alpha(hull_img)
+			var hull_polys := hull_bm.opaque_to_polygons(Rect2(Vector2.ZERO, hull_img.get_size()), 2.0)
+			if not hull_polys.is_empty():
+				var hull_body := StaticBody2D.new()
+				hull_body.position = hp_world
+				hull_body.set_meta("occupier", "HullFragment")
+				hull_body.set_meta("grid_pos", hp)
+				var hull_origin := Vector2(hull_img.get_width() * 0.5, hull_img.get_height() * 0.5)
+				var all_pts := PackedVector2Array()
+				for poly: PackedVector2Array in hull_polys:
+					for pt: Vector2 in poly:
+						all_pts.append((pt - hull_origin) * hull_scale)
+				var hcp := CollisionPolygon2D.new()
+				hcp.polygon = Geometry2D.convex_hull(all_pts)
+				hull_body.add_child(hcp)
+				g.add_child(hull_body)
+	# Supply crates — 1x1 cell with stored inventory.
+	var crate_tex := load("res://art/crash_site/supply crate.png") as Texture2D
+	if crate_tex != null:
+		var crate_scale := float(g.cell_size) * 0.7 / float(max(crate_tex.get_width(), crate_tex.get_height()))
+		for cp_v: Variant in crates:
+			var cp_dict: Dictionary = cp_v as Dictionary
+			var cp: Vector2 = Vector2(int(cp_dict.get("x", 0)), int(cp_dict.get("y", 0)))
+			if not g.grid.has(cp):
+				continue
+			g.grid[cp].occupier = "SupplyCrate"
+			g.grid[cp].navigable = false
+			var cp_world := g.gridToWorld(cp) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+			var crate_shadow := Sprite2D.new()
+			crate_shadow.texture = crate_tex
+			crate_shadow.scale = Vector2(crate_scale * 1.15, crate_scale * 0.5)
+			crate_shadow.position = cp_world + Vector2(6, 8)
+			crate_shadow.modulate = Color(0, 0, 0, 0.35)
+			g.add_child(crate_shadow)
+			g.shadow_sprites.append(crate_shadow)
+			var crate_sprite := Sprite2D.new()
+			crate_sprite.texture = crate_tex
+			crate_sprite.scale = Vector2(crate_scale, crate_scale)
+			crate_sprite.position = cp_world
+			crate_sprite.z_index = int(cp.y) + 1
+			g.add_child(crate_sprite)
+			var crate_img: Image = _alpha_image(crate_tex)
+			var crate_bm := BitMap.new()
+			crate_bm.create_from_image_alpha(crate_img)
+			var crate_polys := crate_bm.opaque_to_polygons(Rect2(Vector2.ZERO, crate_img.get_size()), 2.0)
+			if not crate_polys.is_empty():
+				var crate_body := StaticBody2D.new()
+				crate_body.position = cp_world
+				crate_body.set_meta("occupier", "SupplyCrate")
+				crate_body.set_meta("grid_pos", cp)
+				var crate_origin := Vector2(crate_img.get_width() * 0.5, crate_img.get_height() * 0.5)
+				for poly: PackedVector2Array in crate_polys:
+					var cp2 := CollisionPolygon2D.new()
+					var scaled := PackedVector2Array()
+					for pt: Vector2 in poly:
+						scaled.append((pt - crate_origin) * crate_scale)
+					cp2.polygon = Geometry2D.convex_hull(scaled)
+					crate_body.add_child(cp2)
+				g.add_child(crate_body)
+			g.crate_inventories[cp] = (cp_dict.get("inv", {}) as Dictionary).duplicate(true)
+
+
+# Ambient creatures — peacetime crabs/crawlers/stalkers. Saved with
+# their position + def_key + current HP. Different from wave creatures
+# because they aren't aggressive by default.
+static func restore_ambient_creatures(g: Grid, creatures_data: Array) -> void:
+	var crab_scene := load("res://scenes/Crab.tscn") as PackedScene
+	var light_tex := _make_light_texture()
+	var shore_y: int = g.height / 2
+	for c_v: Variant in creatures_data:
+		var c: Dictionary = c_v as Dictionary
+		var def_key: String = String(c.get("def_key", "alien_crab"))
+		var def: Dictionary = CreatureDefs.DEFS.get(def_key, {})
+		if def.is_empty():
+			continue
+		var tex_down: Texture2D = load(def.tex_down) as Texture2D
+		var tex_side: Texture2D = load(def.tex_side) as Texture2D
+		if tex_down == null or tex_side == null:
+			continue
+		var crab: Crab = crab_scene.instantiate()
+		crab.position = Vector2(float(c.get("pos_x", 0.0)), float(c.get("pos_y", 0.0)))
+		# Re-apply the wander band stored at save time (or fall back to
+		# a sensible default if missing — keeps peacetime crabs from
+		# wandering off into the deep land if the save predates the band
+		# field).
+		crab.shore_y_min = int(c.get("y_min", 0))
+		crab.shore_y_max = int(c.get("y_max", shore_y - 1))
+		g.add_child(crab)
+		g.crabs.append(crab)
+		crab.setup(tex_down, tex_side, g, def)
+		# Restore HP after setup() (which would otherwise reset hp to
+		# the def's max value).
+		var saved_hp: int = int(c.get("hp", -1))
+		if saved_hp > 0:
+			crab.hp = min(saved_hp, crab.max_hp)
+			# Trigger a redraw so the HP bar reflects the saved value.
+			crab.queue_redraw()
+		var light := PointLight2D.new()
+		light.texture = light_tex
+		light.color = Color(0.2, 0.9, 1.0)
+		light.energy = 0.0
+		light.texture_scale = 2.5
+		light.position = Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+		crab.add_child(light)
+		g.crab_lights.append(light)

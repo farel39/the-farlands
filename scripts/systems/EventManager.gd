@@ -7,17 +7,23 @@ extends Node
 # wave loop to keep peace phases from feeling empty.
 
 # Spacing between events. Random within this range so the player can't
-# predict the next one. Tuned to fire 1-2 events per peace phase by default.
-const MIN_EVENT_INTERVAL: float = 35.0
-const MAX_EVENT_INTERVAL: float = 80.0
+# predict the next one. Bumped from 35-80s to 70-150s so events feel
+# like punctuation marks rather than a constant drumbeat — also gives
+# the player breathing room to actually deal with each event before
+# the next one stacks on top.
+const MIN_EVENT_INTERVAL: float = 70.0
+const MAX_EVENT_INTERVAL: float = 150.0
 
 # Each entry: id, name, weight (relative probability), min_wave_completed
 # (gate so harder events don't fire at the start of the run).
+# Brood Mother weight bumped 1 → 2 so she has a fair share of events
+# fired given the longer interval — at weight 1 a player could go an
+# entire run without her appearing once.
 const EVENTS: Array = [
 	{"id": "crab_raid",       "name": "Crab Raid!",         "weight": 3, "min_wave": 0},
 	{"id": "lightning_storm", "name": "Lightning Storm",    "weight": 2, "min_wave": 0},
 	{"id": "supply_drop",     "name": "Supply Drop",        "weight": 2, "min_wave": 0},
-	{"id": "brood_mother",    "name": "Brood Mother Ambush!","weight": 1, "min_wave": 1},
+	{"id": "brood_mother",    "name": "Brood Mother Ambush!","weight": 2, "min_wave": 1},
 	# Branching events — pause and prompt the player to pick. Both options
 	# have real consequences, satisfying "every action affects the run."
 	{"id": "mysterious_beacon","name": "Mysterious Beacon", "weight": 2, "min_wave": 0},

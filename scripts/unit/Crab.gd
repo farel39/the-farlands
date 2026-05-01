@@ -186,8 +186,15 @@ func _drop_loot() -> void:
 		return
 	var recipient: Node = _find_nearest_live_unit()
 	if recipient != null:
+		# Route through Main.add_item_with_overflow so loot from a kill
+		# next to a fully-stocked unit cascades to a teammate with bag
+		# space rather than silently exceeding the 20-slot UI cap.
+		var main_l: Node = get_tree().root.get_node_or_null("Main")
 		for item_name: String in rolled.keys():
-			recipient.data.inventory[item_name] = int(recipient.data.inventory.get(item_name, 0)) + int(rolled[item_name])
+			if main_l != null and main_l.has_method("add_item_with_overflow"):
+				main_l.add_item_with_overflow(recipient, item_name, int(rolled[item_name]))
+			else:
+				recipient.data.inventory[item_name] = int(recipient.data.inventory.get(item_name, 0)) + int(rolled[item_name])
 	# Toast even if there's no recipient — drops are still acknowledged
 	# visually so the player knows a kill paid out (in practice there's
 	# always at least one live unit on screen during a wave).

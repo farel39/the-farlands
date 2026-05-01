@@ -1958,8 +1958,19 @@ func _group_stance_label(units: Array) -> String:
 
 
 func _on_group_stance_pressed() -> void:
+	# Cycle the first unit's stance, then mirror that target onto every
+	# selected unit. Net effect: a uniform group cycles together, and a
+	# mixed group is unified to the same stance in one click instead of
+	# requiring per-unit fixes. Either path leaves the group with a
+	# single shared stance.
+	if _selected_group.is_empty():
+		return
+	var first: Unit = _selected_group[0] as Unit
+	if first == null:
+		return
+	var target_stance: int = (first.stance + 1) % 3
 	for u in _selected_group:
-		(u as Unit).cycle_stance()
+		(u as Unit).set_stance(target_stance)
 	_group_stance_btn.text = "Stance: %s" % _group_stance_label(_selected_group)
 
 
@@ -2302,8 +2313,20 @@ func _refresh_heal_panel() -> void:
 
 func _populate_heal_item_buttons(actor: Unit) -> void:
 	var any: bool = false
+	# Aggregate counts across the entire live team — the medic can pull
+	# meds from any teammate's bag, not just their own. Keeps the
+	# inventory feel as a shared pool (same logic as crafting).
+	var team_count: Dictionary = {}
+	for u in _all_units:
+		if not is_instance_valid(u):
+			continue
+		var unit_node: Unit = u as Unit
+		if unit_node.is_dead() or unit_node.is_downed:
+			continue
+		for item: String in unit_node.data.inventory.keys():
+			team_count[item] = int(team_count.get(item, 0)) + int(unit_node.data.inventory[item])
 	for item: String in HEAL_AMOUNTS.keys():
-		var count: int = int(actor.data.inventory.get(item, 0))
+		var count: int = int(team_count.get(item, 0))
 		if count <= 0:
 			continue
 		any = true
@@ -2322,7 +2345,7 @@ func _populate_heal_item_buttons(actor: Unit) -> void:
 		_heal_body.add_child(b)
 	if not any:
 		var lbl := Label.new()
-		lbl.text = "(no medicine in inventory)"
+		lbl.text = "(no medicine in team inventory)"
 		_heal_body.add_child(lbl)
 
 
@@ -2344,19 +2367,32 @@ func _apply_heal_item(item: String, amount: float) -> void:
 	if not is_instance_valid(target) or target.is_dead():
 		_close_heal_panel()
 		return
-	var inv: Dictionary = _heal_actor.data.inventory
-	var have: int = int(inv.get(item, 0))
-	if have <= 0:
-		_refresh_heal_panel()
-		return
+	# Apply heal first so we don't burn a med that's wasted on a unit
+	# already at full HP. Only deduct from inventory once the target
+	# actually gained HP.
 	var healed: float = target.apply_heal(amount)
 	if healed <= 0.0:
-		# Target already at full HP — don't waste the item.
 		_refresh_heal_panel()
 		return
-	inv[item] = have - 1
-	if inv[item] <= 0:
-		inv.erase(item)
+	# Pull the item from the team pool — Main.pull_shared_resources
+	# walks all live (non-downed) units and decrements wherever the
+	# item exists, so the medic isn't restricted to their own bag.
+	# Falls back to the actor's bag if Main isn't reachable for some
+	# reason (defensive — shouldn't happen at runtime).
+	var consumed: bool = false
+	var main_node: Node = grid.get_parent() if grid != null else null
+	if main_node != null and main_node.has_method("pull_shared_resources"):
+		consumed = main_node.pull_shared_resources({item: 1})
+	if not consumed:
+		# Last-resort: deduct from the actor directly. Lets the heal
+		# still feel "applied" instead of double-billing the player
+		# (since target already received HP via apply_heal above).
+		var inv: Dictionary = _heal_actor.data.inventory
+		var have: int = int(inv.get(item, 0))
+		if have > 0:
+			inv[item] = have - 1
+			if inv[item] <= 0:
+				inv.erase(item)
 	_refresh_char_inv_panel()
 	_close_heal_panel()
 
@@ -2978,14 +3014,27 @@ func _build_endgame_overlay() -> void:
 	col.add_child(sep)
 
 	# Stats panel — populated on victory/defeat with the frozen run_stats
-	# dict. Sits between the title and the action buttons so the player
-	# reads "VICTORY" → their run summary → Restart / Main Menu.
+	# dict. Wrapped in a ScrollContainer with a capped height so a long
+	# "Choices that shaped the run" list (player triggered many choice
+	# events) doesn't push the action buttons off the bottom of the
+	# screen. Scrolls inside the card if it exceeds the cap.
+	var stats_scroll := ScrollContainer.new()
+	stats_scroll.custom_minimum_size = Vector2(480, 0)
+	stats_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stats_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	stats_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# Cap the visible height; anything longer than this scrolls.
+	# 280 fits ~14 lines at 14px font + line spacing, which covers the
+	# fixed stat block (10 lines) + ~4 decision rows comfortably.
+	stats_scroll.custom_minimum_size = Vector2(480, 280)
 	_endgame_stats_lbl = Label.new()
 	_endgame_stats_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_endgame_stats_lbl.add_theme_font_size_override("font_size", 14)
 	_endgame_stats_lbl.modulate = Color(0.92, 0.92, 0.95, 0.95)
 	_endgame_stats_lbl.text = ""
-	col.add_child(_endgame_stats_lbl)
+	_endgame_stats_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stats_scroll.add_child(_endgame_stats_lbl)
+	col.add_child(stats_scroll)
 
 	var sep2 := HSeparator.new()
 	sep2.modulate = Color(1, 1, 1, 0.25)

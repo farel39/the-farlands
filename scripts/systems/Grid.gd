@@ -398,7 +398,11 @@ func mine_rock(cell: Vector2) -> Dictionary:
 		drops["Iron Chunk"] = rng.randi_range(1, 2)
 	if rng.randf() < 0.2:
 		drops["Copper Nugget"] = 1
-	if rng.randf() < 0.1:
+	# 0.20 — middle ground between the original 0.10 (too rare, glass
+	# was the bottleneck for Electronics) and 0.30 (made it trivially
+	# common). At 20% an average rock cluster yields enough glass for
+	# the first Fabricator without grinding a quarry.
+	if rng.randf() < 0.2:
 		drops["Sand Glass Shard"] = 1
 	return drops
 
@@ -984,6 +988,238 @@ func complete_blueprint(grid_pos: Vector2) -> void:
 # overwrites HP if the saved value was less than max (a damaged wall
 # survives the save/load round-trip with its remaining HP intact).
 # Returns true on success, false if the def is unknown.
+# ── World serialization (save/load) ──────────────────────────────────────────
+#
+# Capture the full procedural world state into a JSON-friendly dict so
+# the save system can restore exact tree / rock / ore / driftwood / crash
+# site / monolith / dirt / ambient-creature placements on reload.
+# Player-mutable state (regrowing trees, partial harvest/mine progress,
+# crate inventories) is included alongside so the player resumes with
+# everything they touched intact.
+#
+# Texture variants are stored as 0-based indices into the WorldSpawner
+# *_TEXTURE_PATHS arrays — saves stay portable across asset shuffles
+# only if those arrays don't get reordered (keep them append-only).
+func serialize_world() -> Dictionary:
+	var out: Dictionary = {}
+	# Trees — root cells + texture index by matching the sprite's
+	# texture resource_path against the registered tree texture paths.
+	var trees_arr: Array = []
+	for root in tree_sprites.keys():
+		var sprite: Sprite2D = tree_sprites[root] as Sprite2D
+		if sprite == null or sprite.texture == null:
+			continue
+		var path: String = sprite.texture.resource_path
+		var idx: int = WorldSpawner.TREE_TEXTURE_PATHS.find(path)
+		if idx < 0:
+			idx = 0
+		trees_arr.append({"x": int((root as Vector2).x), "y": int((root as Vector2).y), "tex": idx})
+	out["trees"] = trees_arr
+	# Rocks.
+	var rocks_arr: Array = []
+	for cell in rock_nodes.keys():
+		var entry: Dictionary = rock_nodes[cell]
+		var s: Sprite2D = entry.get("sprite") as Sprite2D
+		var path: String = ""
+		if s != null and s.texture != null:
+			path = s.texture.resource_path
+		var idx: int = WorldSpawner.ROCK_TEXTURE_PATHS.find(path)
+		if idx < 0:
+			idx = 0
+		rocks_arr.append({"x": int((cell as Vector2).x), "y": int((cell as Vector2).y), "tex": idx})
+	out["rocks"] = rocks_arr
+	# Ore veins — kind ("iron" / "copper") tracked on the entry.
+	var ores_arr: Array = []
+	for cell in ore_nodes.keys():
+		var entry: Dictionary = ore_nodes[cell]
+		ores_arr.append({
+			"x": int((cell as Vector2).x), "y": int((cell as Vector2).y),
+			"kind": String(entry.get("kind", "iron")),
+		})
+	out["ores"] = ores_arr
+	# Driftwood piles — tex variant by sprite path.
+	var dw_arr: Array = []
+	for cell in driftwood_nodes.keys():
+		var entry: Dictionary = driftwood_nodes[cell]
+		var s: Sprite2D = entry.get("sprite") as Sprite2D
+		var path: String = ""
+		if s != null and s.texture != null:
+			path = s.texture.resource_path
+		var idx: int = WorldSpawner.DRIFTWOOD_TEXTURE_PATHS.find(path)
+		if idx < 0:
+			idx = 0
+		dw_arr.append({"x": int((cell as Vector2).x), "y": int((cell as Vector2).y), "tex": idx})
+	out["driftwood"] = dw_arr
+	# Dirt biome — flat list of cells.
+	var dirt_arr: Array = []
+	for c in dirt_tiles.keys():
+		dirt_arr.append([int((c as Vector2).x), int((c as Vector2).y)])
+	out["dirt"] = dirt_arr
+	# Crash site — ship anchor + hull cells + supply crates with their
+	# current inventories. Hull / crate cells are read by walking the
+	# main grid for occupier tags so we don't have to maintain a
+	# separate registry.
+	var hulls: Array = []
+	var crates: Array = []
+	for cell in grid.keys():
+		var occ: Variant = grid[cell].occupier
+		if occ == "HullFragment":
+			hulls.append({"x": int((cell as Vector2).x), "y": int((cell as Vector2).y)})
+		elif occ == "SupplyCrate":
+			var inv: Dictionary = crate_inventories.get(cell, {}) as Dictionary
+			crates.append({
+				"x": int((cell as Vector2).x), "y": int((cell as Vector2).y),
+				"inv": inv.duplicate(true),
+			})
+	out["crash_site"] = {
+		"x": int(crash_site_pos.x), "y": int(crash_site_pos.y),
+		"hulls": hulls,
+		"crates": crates,
+		"ship_inventory": ship_inventory.duplicate(true),
+	}
+	# Monolith — single-cell anchor.
+	out["monolith"] = {"x": int(monolith_pos.x), "y": int(monolith_pos.y)}
+	# Ambient creatures — live Crab nodes (peacetime only). Wave and
+	# event-spawned aggressive creatures are filtered out because the
+	# wave state resets to PEACE on load, and leaving stragglers behind
+	# as wandering ambient would be confusing.
+	var creatures_arr: Array = []
+	for u in crabs:
+		if not is_instance_valid(u):
+			continue
+		var crab: Crab = u as Crab
+		if crab.aggressive:
+			continue
+		# Reverse-lookup the def_key from the textures since the Crab
+		# class doesn't store it directly. Falls back to alien_crab.
+		var def_key: String = "alien_crab"
+		if crab._tex_down != null:
+			var dpath: String = crab._tex_down.resource_path
+			for k in CreatureDefs.DEFS:
+				if String(CreatureDefs.DEFS[k].get("tex_down", "")) == dpath:
+					def_key = k
+					break
+		creatures_arr.append({
+			"def_key": def_key,
+			"pos_x": crab.position.x,
+			"pos_y": crab.position.y,
+			"hp": int(crab.hp),
+			"y_min": int(crab.shore_y_min),
+			"y_max": int(crab.shore_y_max),
+		})
+	out["creatures"] = creatures_arr
+	# Player-mutable progress dicts — keys are Vector2, flatten to
+	# {x_y: float} so JSON round-trips cleanly.
+	out["regrowing_trees"] = _serialize_regrowing_trees()
+	out["harvest_progress"] = _serialize_progress_dict(tree_harvest_progress)
+	out["mine_progress"] = _serialize_progress_dict(rock_mine_progress)
+	return out
+
+
+func _serialize_progress_dict(d: Dictionary) -> Array:
+	var out: Array = []
+	for k in d.keys():
+		out.append({"x": int((k as Vector2).x), "y": int((k as Vector2).y), "t": float(d[k])})
+	return out
+
+
+func _serialize_regrowing_trees() -> Array:
+	var out: Array = []
+	for root in regrowing_trees.keys():
+		var entry: Dictionary = regrowing_trees[root]
+		var tex: Texture2D = entry.get("texture")
+		var tex_path: String = tex.resource_path if tex != null else ""
+		out.append({
+			"x": int((root as Vector2).x),
+			"y": int((root as Vector2).y),
+			"elapsed": float(entry.get("elapsed", 0.0)),
+			"tex": tex_path,
+			"full_scale": float(entry.get("full_scale", 1.0)),
+		})
+	return out
+
+
+# Inverse of serialize_world. Called by Main._ready when a save is
+# being loaded — replaces every WorldSpawner.spawn_* call. Caller is
+# responsible for ensuring grid cells are generated and water/sprite
+# layers are set up before this fires (Main._ready does both).
+func apply_world(data: Dictionary) -> void:
+	# Dirt tiles dict must be populated BEFORE restore_dirt runs since
+	# restore_dirt reads neighbours from the dict to compute the fade
+	# shader masks. Also needed before restore_trees so tree placement
+	# checks that already-dirt cells still flag correctly.
+	for c_v: Variant in data.get("dirt", []):
+		var arr: Array = c_v as Array
+		dirt_tiles[Vector2(int(arr[0]), int(arr[1]))] = true
+	# Crash site first — its 4x4 ship + hull cells + crates set
+	# occupier = "CrashedShip" / "HullFragment" / "SupplyCrate" so
+	# downstream restores skip those cells.
+	var cs: Dictionary = data.get("crash_site", {})
+	if not cs.is_empty():
+		var ship_anchor: Vector2 = Vector2(int(cs.get("x", -1)), int(cs.get("y", -1)))
+		WorldSpawner.restore_crash_site(self, ship_anchor, cs.get("hulls", []), cs.get("crates", []), cs.get("ship_inventory", {}))
+	# Monolith.
+	var m: Dictionary = data.get("monolith", {})
+	var m_anchor: Vector2 = Vector2(int(m.get("x", -1)), int(m.get("y", -1)))
+	if m_anchor != Vector2(-1, -1):
+		WorldSpawner.restore_monolith(self, m_anchor)
+	# Trees + dirt visuals — dirt sprites need the dirt_tiles dict
+	# populated above.
+	WorldSpawner.restore_dirt(self)
+	WorldSpawner.restore_trees(self, data.get("trees", []))
+	# Rocks / ores / driftwood.
+	WorldSpawner.restore_rocks(self, data.get("rocks", []))
+	WorldSpawner.restore_ores(self, data.get("ores", []))
+	WorldSpawner.restore_driftwood(self, data.get("driftwood", []))
+	# Ambient creatures.
+	WorldSpawner.restore_ambient_creatures(self, data.get("creatures", []))
+	# Player-mutable progress dicts — written directly back into the
+	# Grid's tracking state. Regrowing trees re-create their sapling
+	# sprite via the existing harvest_tree path's continuation logic
+	# below.
+	for entry_v: Variant in data.get("harvest_progress", []):
+		var e: Dictionary = entry_v as Dictionary
+		tree_harvest_progress[Vector2(int(e.x), int(e.y))] = float(e.get("t", 0.0))
+	for entry_v: Variant in data.get("mine_progress", []):
+		var e: Dictionary = entry_v as Dictionary
+		rock_mine_progress[Vector2(int(e.x), int(e.y))] = float(e.get("t", 0.0))
+	# Regrowing trees — push a fresh sapling sprite at the saved
+	# elapsed time. Sapling visuals are derived from the saved texture
+	# path so a regrowth interrupted at 80% reads as a near-full
+	# sapling on reload.
+	for entry_v: Variant in data.get("regrowing_trees", []):
+		var e: Dictionary = entry_v as Dictionary
+		var root: Vector2 = Vector2(int(e.x), int(e.y))
+		var tex_path: String = String(e.get("tex", ""))
+		var tex: Texture2D = load(tex_path) as Texture2D if tex_path != "" else null
+		_restore_regrowing_tree(root, float(e.get("elapsed", 0.0)), tex, float(e.get("full_scale", 1.0)))
+
+
+# Helper: spawn a sapling sprite for a tree mid-regrow, scaled to its
+# current progress. Mirrors what harvest_tree does when it kicks off a
+# regrowth, but starting from a saved elapsed time.
+func _restore_regrowing_tree(root: Vector2, elapsed: float, texture: Texture2D, full_scale: float) -> void:
+	if texture == null:
+		return
+	var sp: Node2D = sprite_layer if sprite_layer != null else self
+	var centre_pos: Vector2 = gridToWorld(root) + Vector2(cell_size * 1.5, cell_size * 1.5)
+	var sapling := Sprite2D.new()
+	sapling.texture = texture
+	sapling.position = centre_pos
+	sapling.z_index = int(root.y) + 2
+	# Tree-regrow logic in _tick_tree_regrowth lerps scale 0 → full_scale
+	# over REGROW_DURATION seconds; replicate the same curve here.
+	var t: float = clamp(elapsed / REGROW_DURATION, 0.0, 1.0)
+	sapling.scale = Vector2(full_scale * t, full_scale * t)
+	sp.add_child(sapling)
+	regrowing_trees[root] = {
+		"elapsed": elapsed,
+		"texture": texture,
+		"sapling": sapling,
+		"full_scale": full_scale,
+	}
+
+
 func restore_building(grid_pos: Vector2, def_key: String, hp_value: int = -1) -> bool:
 	if not BuildingDefs.DEFS.has(def_key):
 		return false
@@ -1681,7 +1917,14 @@ func _deposit_to_team(anchor: Vector2, items: Dictionary) -> void:
 			recipient = unit_node
 	if recipient != null:
 		for item_name: String in items.keys():
-			recipient.data.inventory[item_name] = int(recipient.data.inventory.get(item_name, 0)) + int(items[item_name])
+			# Overflow-aware deposit: if the closest unit is full, cascade
+			# to teammates with bag space. Same helper used by harvest /
+			# mine / loot drops so fabricator output respects the per-
+			# character UI cap consistently.
+			if main_node.has_method("add_item_with_overflow"):
+				main_node.add_item_with_overflow(recipient, item_name, int(items[item_name]))
+			else:
+				recipient.data.inventory[item_name] = int(recipient.data.inventory.get(item_name, 0)) + int(items[item_name])
 	var gui: Node = get_tree().root.get_node_or_null("Main/CanvasLayer/GUI")
 	if gui != null and gui.has_method("notify_loot_batch"):
 		gui.notify_loot_batch(fab_world, items)

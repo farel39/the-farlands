@@ -16,7 +16,7 @@ func _ready() -> void:
 	add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(420, 400)
+	panel.custom_minimum_size = Vector2(420, 460)
 	center.add_child(panel)
 
 	var col := VBoxContainer.new()
@@ -95,6 +95,42 @@ func _ready() -> void:
 		var sfx_idx: int = AudioServer.get_bus_index("SFX")
 		if sfx_idx != -1:
 			AudioServer.set_bus_volume_db(sfx_idx, linear_to_db(max(v, 0.0001)))
+	)
+
+	# Music volume — third bus slider. Routes to the "Music" bus that
+	# AudioManager creates for the documentary / thriller / dark
+	# soundtrack switching. Independent from SFX so the player can mute
+	# soundtrack without losing gameplay cues.
+	var music_row := HBoxContainer.new()
+	music_row.add_theme_constant_override("separation", 12)
+	col.add_child(music_row)
+
+	var music_label := Label.new()
+	music_label.text = "Music Volume"
+	music_label.custom_minimum_size = Vector2(160, 32)
+	music_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	music_row.add_child(music_label)
+
+	var music_slider := HSlider.new()
+	music_slider.min_value = 0.0
+	music_slider.max_value = 1.0
+	music_slider.step = 0.01
+	music_slider.value = SaveManager.get_music_volume()
+	music_slider.custom_minimum_size = Vector2(200, 32)
+	music_row.add_child(music_slider)
+
+	var music_value := Label.new()
+	music_value.custom_minimum_size = Vector2(40, 32)
+	music_value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	music_value.text = "%d%%" % int(music_slider.value * 100)
+	music_row.add_child(music_value)
+
+	music_slider.value_changed.connect(func(v: float) -> void:
+		SaveManager.set_music_volume(v)
+		music_value.text = "%d%%" % int(v * 100)
+		var music_idx: int = AudioServer.get_bus_index("Music")
+		if music_idx != -1:
+			AudioServer.set_bus_volume_db(music_idx, linear_to_db(max(v, 0.0001)))
 	)
 
 	# Brightness — multiplier applied to canvas_modulate in Main._process.

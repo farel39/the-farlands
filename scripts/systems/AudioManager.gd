@@ -22,12 +22,28 @@ extends Node
 
 var _stream_cache: Dictionary = {}
 
-# Bus name every AudioManager-spawned player routes through. Created
-# programmatically in _ready (parented to Master) so the project doesn't
-# need a custom default_bus_layout.tres. Master controls overall game
-# volume; SFX gives the player a separate slider for sound effects vs.
-# everything else.
+# Bus names for routing categorised audio. Created programmatically in
+# _ready (both parented to Master) so the project doesn't need a custom
+# default_bus_layout.tres. Master controls overall game volume; SFX and
+# Music each get their own slider so the player can mute one without
+# silencing the other.
 const SFX_BUS_NAME: String = "SFX"
+const MUSIC_BUS_NAME: String = "Music"
+
+# Music director state. Two AudioStreamPlayer nodes alternate as the
+# "active" track + "fading-out" track during crossfades, so we can move
+# between thriller and climax tracks without a hard cut.
+var _music_a: AudioStreamPlayer = null
+var _music_b: AudioStreamPlayer = null
+var _music_active: AudioStreamPlayer = null
+var _current_music_path: String = ""
+# Linear time-scaled crossfade — both players have their volume_db
+# tweened in a synchronised pair when the track changes.
+var _music_fade_t: float = 0.0
+var _music_fade_total: float = 0.0
+var _music_fading: bool = false
+const _MUSIC_FULL_DB: float = 0.0
+const _MUSIC_SILENT_DB: float = -60.0
 
 
 func _ready() -> void:
@@ -38,10 +54,100 @@ func _ready() -> void:
 		AudioServer.add_bus(idx)
 		AudioServer.set_bus_name(idx, SFX_BUS_NAME)
 		AudioServer.set_bus_send(idx, "Master")
-	# Apply the persisted SFX volume on first load — same pattern as the
+	# Music bus, same shape as SFX. Sits next to SFX in the bus graph
+	# so master volume scales both, but each has an independent slider.
+	if AudioServer.get_bus_index(MUSIC_BUS_NAME) == -1:
+		var idx: int = AudioServer.bus_count
+		AudioServer.add_bus(idx)
+		AudioServer.set_bus_name(idx, MUSIC_BUS_NAME)
+		AudioServer.set_bus_send(idx, "Master")
+	# Apply the persisted volumes on first load — same pattern as the
 	# master volume in SaveManager.apply_settings.
 	var v: float = SaveManager.get_sfx_volume()
 	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(SFX_BUS_NAME), linear_to_db(max(v, 0.0001)))
+	var mv: float = SaveManager.get_music_volume()
+	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(MUSIC_BUS_NAME), linear_to_db(max(mv, 0.0001)))
+	# Pre-instance the two music players so they're ready for the first
+	# play_music call without a one-frame init delay.
+	_music_a = AudioStreamPlayer.new()
+	_music_a.bus = MUSIC_BUS_NAME
+	_music_a.volume_db = _MUSIC_SILENT_DB
+	add_child(_music_a)
+	_music_b = AudioStreamPlayer.new()
+	_music_b.bus = MUSIC_BUS_NAME
+	_music_b.volume_db = _MUSIC_SILENT_DB
+	add_child(_music_b)
+	_music_active = _music_a
+
+
+# Switch the music track. If `path` matches the currently-playing track
+# this is a no-op (so the music director can call it every frame without
+# restarting the loop). Otherwise the active player fades out while a
+# fresh one fades in over `fade_sec` seconds.
+func play_music(path: String, fade_sec: float = 2.0) -> void:
+	if path == _current_music_path:
+		return
+	_current_music_path = path
+	if path == "":
+		# Empty path means "stop music" — just fade the active out.
+		_music_fading = true
+		_music_fade_t = 0.0
+		_music_fade_total = max(0.05, fade_sec)
+		return
+	# Mark the streams as looping so the per-track music keeps playing
+	# even if the player lingers in a state.
+	var stream: AudioStream = _load_stream(path, true)
+	if stream == null:
+		return
+	# Swap active / inactive; the new player gets the new stream and
+	# fades up while the old one fades out. _process drives the lerp.
+	var fading_out: AudioStreamPlayer = _music_active
+	var fading_in: AudioStreamPlayer = _music_b if _music_active == _music_a else _music_a
+	fading_in.stream = stream
+	fading_in.volume_db = _MUSIC_SILENT_DB
+	fading_in.play()
+	_music_active = fading_in
+	_music_fading = true
+	_music_fade_t = 0.0
+	_music_fade_total = max(0.05, fade_sec)
+
+
+# Hard-stop both music players. Used by Main when leaving the game scene
+# — change_scene_to_file destroys the AudioManager autoload's children
+# anyway, but stopping cleanly first avoids a moment of clipped tail.
+func stop_music_immediate() -> void:
+	if _music_a != null:
+		_music_a.stop()
+	if _music_b != null:
+		_music_b.stop()
+	_current_music_path = ""
+	_music_fading = false
+
+
+func _process(delta: float) -> void:
+	if not _music_fading:
+		return
+	_music_fade_t += delta
+	var k: float = clamp(_music_fade_t / _music_fade_total, 0.0, 1.0)
+	# Linear fade in dB space — sounds close enough to "constant power"
+	# for music transitions without the phasing artifacts a true cosine
+	# crossfade can introduce on long ambient pads.
+	var fade_in_db: float = lerp(_MUSIC_SILENT_DB, _MUSIC_FULL_DB, k)
+	var fade_out_db: float = lerp(_MUSIC_FULL_DB, _MUSIC_SILENT_DB, k)
+	for p in [_music_a, _music_b]:
+		if p == null:
+			continue
+		if p == _music_active:
+			p.volume_db = fade_in_db
+		else:
+			p.volume_db = fade_out_db
+			# Stop the off-track once it's fully faded — saves a tiny
+			# bit of decode work and prevents two streams running
+			# silently in the background forever.
+			if k >= 1.0 and p.playing:
+				p.stop()
+	if k >= 1.0:
+		_music_fading = false
 
 
 # Load (and cache) an AudioStream from disk. `loop` toggles the stream's

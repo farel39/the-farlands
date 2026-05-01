@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://bgvc85ugywlwl"
+path="res://.godot/imported/leberch dark sci fi for climax.mp3-916cff3290b001a27d8a776d3cb4fdbf.mp3str"
+
+[deps]
+
+source_file="res://audio/ambient/leberch dark sci fi for climax.mp3"
+dest_files=["res://.godot/imported/leberch dark sci fi for climax.mp3-916cff3290b001a27d8a776d3cb4fdbf.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

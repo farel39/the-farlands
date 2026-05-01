@@ -158,7 +158,16 @@ func stance_name() -> String:
 		_:              return "Defend"
 
 func cycle_stance() -> void:
-	stance = (stance + 1) % 3
+	set_stance((stance + 1) % 3)
+
+
+# Set stance directly (without cycling). Used by the group-stance
+# button to unify mixed selections onto a single stance value, and any
+# scripted state changes that need an exact stance. Performs the same
+# auto-target cleanup cycle_stance does so the unit's combat state
+# doesn't lag behind the new stance.
+func set_stance(new_stance: int) -> void:
+	stance = new_stance
 	# HOLD/PASSIVE shouldn't keep an auto-acquired target after the toggle.
 	if stance == Stance.HOLD:
 		_combat_target = null
@@ -797,6 +806,14 @@ func queue_relay_channel(anchor: Vector2) -> void:
 	revive_target = null
 	_combat_target = null
 	_force_attack = false
+	# Channeling is a committed action — undraft the unit and switch to
+	# HOLD stance so subsequent right-clicks (move, attack-target) and
+	# auto-acquired enemies don't pull them off the antenna mid-channel.
+	# Player has to right-click somewhere else to break the channel
+	# explicitly. set_drafted's path-reset doesn't matter here because
+	# we're about to overwrite path below anyway.
+	drafted = false
+	stance = Stance.HOLD
 	# Path to a free tile next to the antenna's 2x2 footprint.
 	var dest_cell: Vector2 = _find_relay_destination(anchor)
 	if dest_cell == Vector2(-1, -1):
@@ -1514,8 +1531,12 @@ func _tick_gather(delta: float) -> void:
 			actual[item] = take
 	if not actual.is_empty():
 		grid.take_from_inventory(gather_target, actual)
+		var main_g: Node = get_tree().root.get_node_or_null("Main")
 		for item in actual:
-			data.inventory[item] = data.inventory.get(item, 0) + actual[item]
+			if main_g != null and main_g.has_method("add_item_with_overflow"):
+				main_g.add_item_with_overflow(self, item, int(actual[item]))
+			else:
+				data.inventory[item] = data.inventory.get(item, 0) + actual[item]
 		# Fire the unified pickup feedback (toast + SFX) so collecting
 		# driftwood / crate items feels the same as harvest / mine drops.
 		# Position above the source cell, not the worker, so the player's
@@ -2045,8 +2066,16 @@ func _tick_harvest(delta: float) -> void:
 	var fall_world: Vector2 = grid.gridToWorld(root) + Vector2(grid.cell_size * 1.5, grid.cell_size * 1.5)
 	AudioManager.play_2d(Sounds.TREE_FALL, fall_world)
 	if not drops.is_empty():
+		# Route through Main.add_item_with_overflow so a chopper with a
+		# full inventory passes the drops to a teammate with space
+		# instead of silently bloating their own bag past the 20-slot
+		# UI cap.
+		var main_h: Node = get_tree().root.get_node_or_null("Main")
 		for item_name: String in drops.keys():
-			data.inventory[item_name] = int(data.inventory.get(item_name, 0)) + int(drops[item_name])
+			if main_h != null and main_h.has_method("add_item_with_overflow"):
+				main_h.add_item_with_overflow(self, item_name, int(drops[item_name]))
+			else:
+				data.inventory[item_name] = int(data.inventory.get(item_name, 0)) + int(drops[item_name])
 		if gui != null and gui.has_method("notify_loot_batch"):
 			# Toast above the tree's centre (3x3 footprint).
 			var world: Vector2 = grid.gridToWorld(root) + Vector2(grid.cell_size * 1.5, grid.cell_size * 0.5)
@@ -2081,8 +2110,12 @@ func _tick_mine(delta: float) -> void:
 	_mine_timer = -1.0
 	_stop_work_loop()
 	if not drops.is_empty():
+		var main_m: Node = get_tree().root.get_node_or_null("Main")
 		for item_name: String in drops.keys():
-			data.inventory[item_name] = int(data.inventory.get(item_name, 0)) + int(drops[item_name])
+			if main_m != null and main_m.has_method("add_item_with_overflow"):
+				main_m.add_item_with_overflow(self, item_name, int(drops[item_name]))
+			else:
+				data.inventory[item_name] = int(data.inventory.get(item_name, 0)) + int(drops[item_name])
 		if gui != null and gui.has_method("notify_loot_batch"):
 			var world: Vector2 = grid.gridToWorld(rock_cell) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
 			gui.notify_loot_batch(world, drops)

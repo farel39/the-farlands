@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://dgi78l0i624ko"
+path="res://.godot/imported/leberch sci fi documentary main menu music.mp3-b9f89827f15bb3e0a53b75b7532dc21f.mp3str"
+
+[deps]
+
+source_file="res://audio/ambient/leberch sci fi documentary main menu music.mp3"
+dest_files=["res://.godot/imported/leberch sci fi documentary main menu music.mp3-b9f89827f15bb3e0a53b75b7532dc21f.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

@@ -29,6 +29,13 @@ const MONSTER_GROWL: String = "res://audio/creatures/monster growl sound effect.
 # to "actively hunting you."
 const BEAST_GROWL: String = "res://audio/creatures/beast growl sound effect.mp3"
 
+# Music tracks. Routed through the Music bus (separate volume slider).
+# Played by the music director in Main + the main-menu init based on
+# game state — see Main._tick_music_director and MainMenu._ready.
+const MUSIC_MAIN_MENU: String = "res://audio/ambient/leberch sci fi documentary main menu music.mp3"
+const MUSIC_THRILLER: String  = "res://audio/ambient/leberch sci thriller for the majority of play.mp3"
+const MUSIC_DARK: String      = "res://audio/ambient/leberch dark sci fi for climax.mp3"
+
 # One-shots fired at the moment of an event.
 const TREE_FALL: String = "res://audio/work/tree fall.mp3"
 const ITEM_PICKUP: String = "res://audio/work/Item Pickup (Item Sound Effect).mp3"

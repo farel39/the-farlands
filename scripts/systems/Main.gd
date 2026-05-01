@@ -101,8 +101,15 @@ const DRAG_THRESHOLD := 8.0
 func _ready() -> void:
 	grid.generateGrid()
 	_place_water()
-	grid.spawnCrashSite()
-	grid.spawnTidePools()
+	# Peek at the queued save BEFORE world generation so we can branch:
+	# fresh game → procedural spawns; load → call grid.apply_world(data)
+	# instead of randomising. Saves with no "world" payload (legacy MVP
+	# saves) still take the procedural path so they aren't broken by the
+	# upgrade.
+	var pending_save: Dictionary = _peek_pending_save()
+	var has_world_data: bool = pending_save.has("world") and not (pending_save.world as Dictionary).is_empty()
+	# Layers must exist before EITHER spawn path runs since both
+	# procedural and restore add sprites into sprite_layer / dirt_layer.
 	var dirt_layer := Node2D.new()
 	dirt_layer.name = "DirtLayer"
 	add_child(dirt_layer)
@@ -111,11 +118,16 @@ func _ready() -> void:
 	sprite_layer.name = "SpriteLayer"
 	add_child(sprite_layer)
 	grid.sprite_layer = sprite_layer
-	grid.spawnTrees()
-	grid.spawnDriftwood()
-	grid.spawnRocks()
-	grid.spawnMonolith()
-	grid.spawnCrabs()
+	if has_world_data:
+		grid.apply_world(pending_save.world as Dictionary)
+	else:
+		grid.spawnCrashSite()
+		grid.spawnTidePools()
+		grid.spawnTrees()
+		grid.spawnDriftwood()
+		grid.spawnRocks()
+		grid.spawnMonolith()
+		grid.spawnCrabs()
 	_setup_entity_visibility()
 	pathfinding.initialize()
 	gui.cut_requested.connect(_on_cut_requested)
@@ -125,14 +137,18 @@ func _ready() -> void:
 	_spawn_units()
 	_setup_inspect_popup()
 	_setup_fog()
-	_explore_crash_site()
+	# _explore_crash_site reveals the crash-site fog cells. Skip when
+	# loading (the fog state isn't preserved yet, so the player gets a
+	# fresh fog reveal — but the crash site already is visible from
+	# their build progress).
+	if not has_world_data:
+		_explore_crash_site()
 	_setup_ambient_light()
 	_setup_wave_manager()
 	_setup_harvest_highlight()
-	# Apply any save-data queued by the menu (Pause → Load, Main Menu →
-	# Continue, etc.). Runs AFTER all systems are wired so apply_run_data
-	# can talk to the wave_manager / grid / units freely. No-op when
-	# queued_load_slot is the sentinel -1 (fresh run).
+	# Apply the rest of the save (units / run state / buildings) AFTER
+	# wave_manager + units exist. _apply_pending_load is a no-op when
+	# queued_load_slot is -1.
 	_apply_pending_load()
 
 
@@ -350,10 +366,16 @@ func _place_water() -> void:
 	var water_node: Node2D = grid.get_node("Water")
 	var row_width: float = float(grid.width * grid.cell_size)
 
-	# Mark every water cell in the grid dict so trees/rocks avoid them.
+	# Mark every water cell in the grid dict so trees/rocks avoid them,
+	# and flip their navigable flag off so pathfinding refuses to route
+	# through the ocean. The CellData.navChanged signal propagates this
+	# into nav_grid (Grid._on_tile_nav_changed), which is what
+	# Pathfinding reads.
 	for x in grid.width:
 		for y in range(shore_y, grid.height):
-			grid.water_tiles[Vector2(x, y)] = true
+			var c: Vector2 = Vector2(x, y)
+			grid.water_tiles[c] = true
+			grid.grid[c].navigable = false
 
 	# Create one ColorRect per row with a smoothstepped alpha gradient.
 	for y in range(shore_y, grid.height):
@@ -1237,6 +1259,58 @@ func _can_build_now(bp_pos: Vector2) -> bool:
 # Public hook: anything that grows the team's inventory (harvest, mine, loot
 # drop, refund) calls this so deferred build tasks get a fresh look. Cheap
 # enough to call freely — _assign_tasks short-circuits when nothing changed.
+# Per-character inventory cap. Matches the 20 visible slots in the
+# character-inventory UI — going past this would silently truncate the
+# display. Stacks of an existing item type don't count against the cap
+# (you can hold 99 driftwood in one slot, that's still 1 slot).
+const MAX_INVENTORY_TYPES: int = 20
+
+
+# Try to deposit `count` of `item` into `preferred_unit`'s inventory.
+# Falls back to teammates with space when the preferred unit is full
+# (already holds 20 distinct item types AND doesn't already have this
+# item). When everyone is full we still dump it on the preferred unit
+# so the drop is never silently lost — losing loot to capacity feels
+# worse than a slightly oversized bag.
+func add_item_with_overflow(preferred_unit, item_name: String, count: int) -> void:
+	if count <= 0 or item_name == "":
+		return
+	if _try_add_to_unit(preferred_unit, item_name, count):
+		return
+	# Cycle through teammates in array order — closest-by-position
+	# would be nicer but the team is only 3 units, so order is fine
+	# and keeps the helper deterministic.
+	for u in all_units:
+		if u == preferred_unit:
+			continue
+		if _try_add_to_unit(u, item_name, count):
+			return
+	# Last-resort dump: every live unit's bag is full of distinct types.
+	# Drop on the preferred unit anyway and warn — better than losing
+	# the resource. Player can re-organise via drag-drop.
+	if is_instance_valid(preferred_unit):
+		preferred_unit.data.inventory[item_name] = int(preferred_unit.data.inventory.get(item_name, 0)) + count
+		push_warning("Inventory overflow: every unit is full of distinct item types. Dumped %d %s onto %s anyway." % [count, item_name, preferred_unit.data.name])
+
+
+func _try_add_to_unit(unit, item_name: String, count: int) -> bool:
+	if unit == null or not is_instance_valid(unit):
+		return false
+	var unit_node: Unit = unit as Unit
+	if unit_node.is_dead() or unit_node.is_downed or unit_node.evacuated:
+		return false
+	var inv: Dictionary = unit_node.data.inventory
+	# Stacking onto an existing slot — never blocked by the type cap.
+	if inv.has(item_name):
+		inv[item_name] = int(inv[item_name]) + count
+		return true
+	# New item type — only fits if we're below the cap.
+	if inv.size() < MAX_INVENTORY_TYPES:
+		inv[item_name] = count
+		return true
+	return false
+
+
 func notify_inventory_changed() -> void:
 	_assign_tasks()
 	# Refresh open UI panels that display per-item have/need counts (Construct
@@ -1349,6 +1423,12 @@ func serialize_run() -> Dictionary:
 			"completed": bool(relay.get("completed", false)),
 		})
 	d["comm_relays"] = relay_arr
+	# Procedural world snapshot — every tree / rock / ore / driftwood /
+	# dirt cell / crash-site debris / monolith / ambient-creature
+	# position + variant + dynamic state (mining/harvest progress,
+	# regrowth, crate inventories). Restored by Grid.apply_world during
+	# Main._ready before unit spawn / building restoration.
+	d["world"] = grid.serialize_world()
 	return d
 
 
@@ -1469,6 +1549,66 @@ func _apply_pending_load() -> void:
 	if data.is_empty():
 		return
 	apply_run_data(data)
+
+
+# Read-only inspection of the save queued by the menu — used during
+# _ready before world generation to decide between the procedural and
+# restored spawn paths. Does NOT consume queued_load_slot (the actual
+# consumption happens later in _apply_pending_load), so the same slot
+# is read twice per load: once here for world data, once for run data.
+# Empty dict on miss / no queued slot.
+func _peek_pending_save() -> Dictionary:
+	var slot: int = SaveManager.queued_load_slot
+	if slot < 0:
+		return {}
+	return SaveManager.read_run_data(slot)
+
+
+# Music director — picks between thriller (normal play) and dark
+# (climax) based on game state. Polled at a low rate from _process so
+# the AudioManager crossfade isn't restarted every frame.
+#
+# Climax conditions (any one switches to dark):
+#   • WaveManager state is EVAC (rescue shuttle live, finale)
+#   • A Comm Relay is mid-channel (defending the antenna)
+#   • Threat level high enough to unlock Sky Mawlings (60+) — implies
+#     waves are now lethal
+#   • Brood Mother boss creature alive on the field
+const _MUSIC_DARK_THREAT_THRESHOLD: float = 60.0
+const _MUSIC_TICK_INTERVAL: float = 1.0
+var _music_tick_t: float = 0.0
+func _tick_music_director(delta: float) -> void:
+	_music_tick_t -= delta
+	if _music_tick_t > 0.0:
+		return
+	_music_tick_t = _MUSIC_TICK_INTERVAL
+	var dark: bool = false
+	# EVAC phase — wave_manager.State enum: 0 PEACE, 1 WAVE, 2 EVAC.
+	if wave_manager != null and "state" in wave_manager:
+		if int(wave_manager.state) == 2:
+			dark = true
+	# Active relay channel.
+	if not dark and grid != null:
+		for anchor in grid.comm_relays.keys():
+			var relay: Dictionary = grid.comm_relays[anchor]
+			if relay.get("channeler") != null and not bool(relay.get("completed", false)):
+				dark = true
+				break
+	# Sustained high threat.
+	if not dark and threat_level >= _MUSIC_DARK_THREAT_THRESHOLD:
+		dark = true
+	# Brood Mother on the field — instant escalation.
+	if not dark and grid != null:
+		for c in grid.crabs:
+			if not is_instance_valid(c):
+				continue
+			# Match by max_hp since the Brood Mother is the only creature
+			# above 100 HP — cheaper than reverse-looking-up the def_key.
+			if int(c.max_hp) >= 200:
+				dark = true
+				break
+	var path: String = Sounds.MUSIC_DARK if dark else Sounds.MUSIC_THRILLER
+	AudioManager.play_music(path, 3.0)
 
 
 # Pull a multi-item dict from the team's combined inventory. Returns true on
@@ -1737,6 +1877,9 @@ func toggle_brightness() -> void:
 
 
 func _process(_delta: float) -> void:
+	# Music director ticks once per second, picking between thriller and
+	# dark tracks based on game state. Crossfades inside AudioManager.
+	_tick_music_director(_delta)
 	# Run timer only counts pre-victory/defeat — once the run ends the
 	# summary panel freezes the elapsed time alongside the other stats.
 	# Threat baseline also pauses on game end so the bar stops creeping.

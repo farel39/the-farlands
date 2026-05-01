@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://o8i4py2388yj"
+path="res://.godot/imported/leberch sci thriller for the majority of play.mp3-5c0bb0500e2f42924d4ce2bc6cc658e3.mp3str"
+
+[deps]
+
+source_file="res://audio/ambient/leberch sci thriller for the majority of play.mp3"
+dest_files=["res://.godot/imported/leberch sci thriller for the majority of play.mp3-5c0bb0500e2f42924d4ce2bc6cc658e3.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

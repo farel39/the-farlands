@@ -154,6 +154,18 @@ func set_sfx_volume(v: float) -> void:
 	settings.set_value("audio", "sfx_volume", clamp(v, 0.0, 1.0))
 
 
+# Music bus volume — separate from SFX so the player can have a quiet
+# soundtrack with full-volume gameplay sounds (or vice versa). Defaults
+# to 0.7 because the music samples are full-range and tend to sit louder
+# than the gameplay SFX at 1.0.
+func get_music_volume() -> float:
+	return float(settings.get_value("audio", "music_volume", 0.7))
+
+
+func set_music_volume(v: float) -> void:
+	settings.set_value("audio", "music_volume", clamp(v, 0.0, 1.0))
+
+
 func get_fullscreen() -> bool:
 	return bool(settings.get_value("display", "fullscreen", false))
 
@@ -190,6 +202,10 @@ func apply_settings() -> void:
 	if sfx_idx != -1:
 		var sv: float = get_sfx_volume()
 		AudioServer.set_bus_volume_db(sfx_idx, linear_to_db(max(sv, 0.0001)))
+	var music_idx: int = AudioServer.get_bus_index("Music")
+	if music_idx != -1:
+		var mv: float = get_music_volume()
+		AudioServer.set_bus_volume_db(music_idx, linear_to_db(max(mv, 0.0001)))
 	var fs: bool = get_fullscreen()
 	DisplayServer.window_set_mode(
 		DisplayServer.WINDOW_MODE_FULLSCREEN if fs else DisplayServer.WINDOW_MODE_WINDOWED

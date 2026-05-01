@@ -331,5 +331,10 @@ func _show_toast(msg: String) -> void:
 func _format_ts(t: int) -> String:
 	if t <= 0:
 		return "—"
-	var d := Time.get_datetime_dict_from_unix_time(t)
+	# Time.get_datetime_dict_from_unix_time returns UTC. Shift by the
+	# system's timezone bias (in minutes) so the displayed timestamp
+	# matches the player's wall clock instead of being N hours off.
+	var tz: Dictionary = Time.get_time_zone_from_system()
+	var local_unix: int = t + int(tz.get("bias", 0)) * 60
+	var d := Time.get_datetime_dict_from_unix_time(local_unix)
 	return "%04d-%02d-%02d  %02d:%02d" % [d.year, d.month, d.day, d.hour, d.minute]
