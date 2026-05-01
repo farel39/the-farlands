@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://drx1s4tlc7bpw"
-path="res://.godot/imported/frame_0035.png-b2cb619546925c36e89e721853009c5c.ctex"
+path.s3tc="res://.godot/imported/frame_0035.png-b2cb619546925c36e89e721853009c5c.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the pilot walking animation sideway frames/frame_0035.png"
-dest_files=["res://.godot/imported/frame_0035.png-b2cb619546925c36e89e721853009c5c.ctex"]
+dest_files=["res://.godot/imported/frame_0035.png-b2cb619546925c36e89e721853009c5c.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

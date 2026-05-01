@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://qa7lewei0chh"
-path="res://.godot/imported/frame_005.png-e348873762255c1e5f351048410e5186.ctex"
+path.s3tc="res://.godot/imported/frame_005.png-e348873762255c1e5f351048410e5186.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the medic attacking animation downward frames/frame_005.png"
-dest_files=["res://.godot/imported/frame_005.png-e348873762255c1e5f351048410e5186.ctex"]
+dest_files=["res://.godot/imported/frame_005.png-e348873762255c1e5f351048410e5186.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

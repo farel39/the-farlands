@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://dommm7vx8g6mg"
+path="res://.godot/imported/beast growl sound effect.mp3-7a8ffda3568f5dabc8e4c376a250e716.mp3str"
+
+[deps]
+
+source_file="res://audio/creatures/beast growl sound effect.mp3"
+dest_files=["res://.godot/imported/beast growl sound effect.mp3-7a8ffda3568f5dabc8e4c376a250e716.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

@@ -18,6 +18,7 @@ config/icon="res://art/icon.svg"
 [autoload]
 
 SaveManager="*res://scripts/systems/SaveManager.gd"
+AudioManager="*res://scripts/systems/AudioManager.gd"
 
 [display]
 

@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ds8piqa3f2ftr"
-path="res://.godot/imported/the medic downed.png-494586d914c646b059bf36554e73e709.ctex"
+path.s3tc="res://.godot/imported/the medic downed.png-494586d914c646b059bf36554e73e709.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the medic downed.png"
-dest_files=["res://.godot/imported/the medic downed.png-494586d914c646b059bf36554e73e709.ctex"]
+dest_files=["res://.godot/imported/the medic downed.png-494586d914c646b059bf36554e73e709.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

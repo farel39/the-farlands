@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://hrmxc3f8ov6p"
-path="res://.godot/imported/evac shuttle.png-d9fa0c717a899a30d844da56b94a8013.ctex"
+path.s3tc="res://.godot/imported/evac shuttle.png-d9fa0c717a899a30d844da56b94a8013.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/structures/evac shuttle.png"
-dest_files=["res://.godot/imported/evac shuttle.png-d9fa0c717a899a30d844da56b94a8013.ctex"]
+dest_files=["res://.godot/imported/evac shuttle.png-d9fa0c717a899a30d844da56b94a8013.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

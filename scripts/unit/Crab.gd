@@ -53,6 +53,13 @@ var render_scale: float = 1.0
 # rolls independently against `chance`, then randi_range(min,max) for the count.
 # Empty array = no drops (default for ambient peacetime spawns without a def).
 var _drops: Array = []
+# Per-creature engagement growl. Pulled from CreatureDefs.growl_sound
+# during setup(). Played once via AudioManager when the creature first
+# acquires an aggro target (either via take_damage retaliation or the
+# aggressive hunting AI). _growled latches so we don't spam the sound
+# every time the target list refreshes.
+var _growl_sound: String = ""
+var _growled: bool = false
 var _attack_cooldown: float = 0.0
 var _is_attacking: bool = false
 var _attack_t: float = 0.0
@@ -81,6 +88,7 @@ func setup(down: Texture2D, side: Texture2D, g: Grid, def: Dictionary = {}) -> v
 		flip_v_south = bool(def.get("flip_v_south", flip_v_south))
 		render_scale = float(def.get("render_scale", render_scale))
 		_drops = def.get("drops", [])
+		_growl_sound = String(def.get("growl_sound", ""))
 	_rng.randomize()
 	_idle_duration = _rng.randf_range(0.5, 2.5)
 	_apply_sprite(down, false)
@@ -97,6 +105,10 @@ func take_damage(amount: int, attacker: Node = null) -> void:
 	_hit_flash_t = HIT_FLASH_DURATION
 	if attacker != null and is_instance_valid(attacker):
 		aggro_target = attacker
+		_maybe_play_engagement_growl()
+	# Refresh the overhead HP bar — _draw is event-driven, so the bar's
+	# fill width only changes when we explicitly request a redraw.
+	queue_redraw()
 	if hp <= 0:
 		_drop_loot()
 		# Tick the run kill counter (drop-aware so peacetime ambient crabs
@@ -105,6 +117,49 @@ func take_damage(amount: int, attacker: Node = null) -> void:
 		if main_n != null and main_n.has_method("record_kill"):
 			main_n.record_kill()
 		queue_free()
+
+
+func _draw() -> void:
+	# Overhead HP bar — visible only after the creature has been hit.
+	# Mirrors the building HP bar style in Grid.gd: black track, green→
+	# yellow→red fill based on remaining %, 1px border.
+	#
+	# Position is derived from the actual rendered sprite rect rather
+	# than a cell-size approximation, because the Crab's Sprite2D uses
+	# `centered = false` (texture top-left sits on the Node2D origin).
+	# For non-square textures or boss creatures (render_scale 3.0), the
+	# old "centered on local origin" math placed the bar to the upper-
+	# left of the visible body. Reading texture.get_size() * scale
+	# gives the true visible footprint regardless of aspect ratio or
+	# render_scale.
+	if grid == null or hp >= max_hp or hp <= 0:
+		return
+	var sprite_node := get_node_or_null("Sprite2D") as Sprite2D
+	if sprite_node == null or sprite_node.texture == null:
+		return
+	var pct: float = clamp(float(hp) / float(max_hp), 0.0, 1.0)
+	var tex_size: Vector2 = sprite_node.texture.get_size() * sprite_node.scale
+	# Visible body bounds in local coords. centered=false means top-left
+	# at origin, top-right at (tex_size.x, 0), bottom at (..., tex_size.y).
+	# Centered=true (the engine default) would put center at origin — kept
+	# as a fallback for safety in case the scene ever flips that flag.
+	var body_left: float = 0.0
+	var body_top: float = 0.0
+	if sprite_node.centered:
+		body_left = -tex_size.x * 0.5
+		body_top = -tex_size.y * 0.5
+	var body_center_x: float = body_left + tex_size.x * 0.5
+	var bar_w: float = tex_size.x * 0.7
+	var bar_h: float = 4.0
+	var bar_x: float = body_center_x - bar_w * 0.5
+	var bar_y: float = body_top - 8.0
+	# Track
+	draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.05, 0.05, 0.05, 0.85), true)
+	# Fill — green when healthy, yellow when bloodied, red when critical.
+	var fill_col: Color = Color(0.30, 0.85, 0.30) if pct > 0.6 else (Color(1.0, 0.80, 0.20) if pct > 0.3 else Color(1.0, 0.30, 0.25))
+	draw_rect(Rect2(bar_x, bar_y, bar_w * pct, bar_h), fill_col, true)
+	# 1px border
+	draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0, 0, 0, 0.85), false, 1.0)
 
 
 # Roll the loot table, deposit items into the closest live (non-downed) unit,
@@ -144,6 +199,18 @@ func _drop_loot() -> void:
 	var main: Node = get_tree().root.get_node_or_null("Main")
 	if main != null and main.has_method("notify_inventory_changed"):
 		main.notify_inventory_changed()
+
+
+# Fire the per-creature engagement growl once. Called from both aggro
+# entry points (take_damage retaliation, hunting AI), but the _growled
+# latch ensures only the first transition into "I have a target" plays
+# the sound. -4 dB so a pack of stalkers engaging at once layers as a
+# chorus rather than blowing out the mix.
+func _maybe_play_engagement_growl() -> void:
+	if _growled or _growl_sound == "":
+		return
+	_growled = true
+	AudioManager.play_2d(_growl_sound, global_position, -4.0)
 
 
 func _find_nearest_live_unit() -> Node:
@@ -210,6 +277,8 @@ func _process(delta: float) -> void:
 	# take_damage(), so this branch is a no-op for them.
 	if aggressive and aggro_target == null:
 		aggro_target = _find_nearest_unit()
+		if aggro_target != null:
+			_maybe_play_engagement_growl()
 
 	if aggro_target != null:
 		_path.clear()
@@ -284,7 +353,7 @@ func _tick_combat(delta: float) -> void:
 	if abs(dir.x) > abs(dir.y):
 		_apply_sprite(_tex_side, dir.x > 0)
 	else:
-		_apply_sprite(_tex_down, false, flip_v_south and dir.y > 0.0)
+		_apply_sprite(_tex_down, false, (flip_v_south and dir.y > 0.0) or (not flip_v_south and dir.y < 0.0))
 
 	var d: float = crab_center.distance_to(target_world)
 	var range_world: float = attack_range_tiles * float(grid.cell_size)
@@ -332,6 +401,11 @@ func _apply_combat_hit() -> void:
 	# the unit so a wall hit doesn't also spend a unit attack tick.
 	if _wall_target_cell != _NO_WALL_TARGET:
 		grid.damage_wall_at(_wall_target_cell, attack_damage)
+		# Wall hits use the same claw SFX (chitin on wood/stone reads close
+		# enough) but pan from the wall cell so the player can localize the
+		# attacker without seeing the crab specifically.
+		var wc: Vector2 = grid.gridToWorld(_wall_target_cell) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+		AudioManager.play_2d(Sounds.CLAW_HIT, wc)
 		return
 	if aggro_target == null or not is_instance_valid(aggro_target):
 		return
@@ -339,6 +413,10 @@ func _apply_combat_hit() -> void:
 		return
 	if aggro_target.has_method("take_damage"):
 		aggro_target.take_damage(attack_damage, self)
+	# Claw hit pans from the victim's position so the impact reads as
+	# happening to the unit, not the crab — easier to track which of your
+	# units is taking damage when you have several engaged at once.
+	AudioManager.play_2d(Sounds.CLAW_HIT, aggro_target.global_position)
 
 
 func _walk(delta: float) -> void:
@@ -352,7 +430,7 @@ func _walk(delta: float) -> void:
 		if abs(dir.x) > abs(dir.y):
 			_apply_sprite(_tex_side, dir.x > 0)
 		else:
-			_apply_sprite(_tex_down, false, flip_v_south and dir.y > 0.0)
+			_apply_sprite(_tex_down, false, (flip_v_south and dir.y > 0.0) or (not flip_v_south and dir.y < 0.0))
 		if dist <= remaining:
 			position = _path[0]
 			_path.pop_front()

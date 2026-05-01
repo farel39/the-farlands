@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cbfx1ovmteh4i"
-path="res://.godot/imported/wood wall corner.png-36b458c54a8b274ee9f187a9404b1dc6.ctex"
+path.s3tc="res://.godot/imported/wood wall corner.png-36b458c54a8b274ee9f187a9404b1dc6.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/structures/wood wall corner.png"
-dest_files=["res://.godot/imported/wood wall corner.png-36b458c54a8b274ee9f187a9404b1dc6.ctex"]
+dest_files=["res://.godot/imported/wood wall corner.png-36b458c54a8b274ee9f187a9404b1dc6.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

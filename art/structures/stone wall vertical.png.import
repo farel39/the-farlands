@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://d3v23ck0k8ay4"
-path="res://.godot/imported/stone wall vertical.png-22d24e44f758aa9ad9628b8bdfebc19b.ctex"
+path.s3tc="res://.godot/imported/stone wall vertical.png-22d24e44f758aa9ad9628b8bdfebc19b.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/structures/stone wall vertical.png"
-dest_files=["res://.godot/imported/stone wall vertical.png-22d24e44f758aa9ad9628b8bdfebc19b.ctex"]
+dest_files=["res://.godot/imported/stone wall vertical.png-22d24e44f758aa9ad9628b8bdfebc19b.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

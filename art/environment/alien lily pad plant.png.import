@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cmnduqpyjpy6e"
-path="res://.godot/imported/alien lily pad plant.png-2edaa4e112253b1036f0096949a5f1a3.ctex"
+path.s3tc="res://.godot/imported/alien lily pad plant.png-2edaa4e112253b1036f0096949a5f1a3.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/environment/alien lily pad plant.png"
-dest_files=["res://.godot/imported/alien lily pad plant.png-2edaa4e112253b1036f0096949a5f1a3.ctex"]
+dest_files=["res://.godot/imported/alien lily pad plant.png-2edaa4e112253b1036f0096949a5f1a3.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -7,6 +7,7 @@ const MAIN_SCENE := "res://scenes/Main.tscn"
 
 var _root_view: Control = null
 var _load_view: Control = null
+var _controls_view: Control = null
 var _save_toast: Label = null
 var _toast_tween: Tween = null
 
@@ -40,7 +41,12 @@ func _build() -> void:
 	panel.add_child(margin)
 
 	var stack := Control.new()
-	stack.custom_minimum_size = Vector2(360, 320)
+	# Bumped from 320 → 460 to fit the now-6-button root view (was 5
+	# before the Controls button) plus the title, slot label, spacer,
+	# and save-toast. The Load and Controls views inherit the same
+	# stack so they have headroom too — Controls especially, since
+	# its outer column has a vertical scroll plus a Back button below.
+	stack.custom_minimum_size = Vector2(360, 460)
 	margin.add_child(stack)
 
 	_root_view = _build_root_view()
@@ -51,6 +57,11 @@ func _build() -> void:
 	_load_view.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_load_view.visible = false
 	stack.add_child(_load_view)
+
+	_controls_view = _build_controls_view()
+	_controls_view.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_controls_view.visible = false
+	stack.add_child(_controls_view)
 
 
 func _build_root_view() -> Control:
@@ -76,6 +87,7 @@ func _build_root_view() -> Control:
 	_add_btn(col, "Resume", _on_resume)
 	_add_btn(col, "Save", _on_save)
 	_add_btn(col, "Load", _on_load_show)
+	_add_btn(col, "Controls", _on_controls_show)
 	_add_btn(col, "Settings", _on_settings)
 	_add_btn(col, "Quit to Main Menu", _on_quit)
 
@@ -105,6 +117,94 @@ func _build_load_view() -> Control:
 
 	_add_btn(col, "Back", _on_load_back)
 	return col
+
+
+func _build_controls_view() -> Control:
+	# Reference card listing every input the player can use. Hand-curated
+	# from Main._unhandled_input + the GUI's mouse handling. If you bind
+	# new keys, add them here too — there's no auto-discovery.
+	# Wrapped in a ScrollContainer so the section list can grow beyond
+	# the pause panel's fixed 320px height without overflowing.
+	var outer := VBoxContainer.new()
+	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	outer.add_theme_constant_override("separation", 8)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	outer.add_child(scroll)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 8)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(col)
+
+	var title := Label.new()
+	title.text = "Controls"
+	title.add_theme_font_size_override("font_size", 28)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(title)
+
+	# Pairs of (binding, description). Grouped by section via header rows.
+	var sections: Array = [
+		{"header": "Mouse", "rows": [
+			["Left-click",            "Select unit or hovered object"],
+			["Shift + Left-click",    "Add to / remove from selection"],
+			["Click + drag",          "Rectangle-select multiple units"],
+			["Right-click",           "Contextual action — move, attack, harvest, mine, cancel"],
+		]},
+		{"header": "Keyboard", "rows": [
+			["A",      "Order selected drafted unit to attack"],
+			["R",      "Toggle draft on every selected unit"],
+			["ESC",    "Pause / resume — also closes blueprint mode"],
+			["F",      "Toggle fog of war (debug)"],
+		]},
+		{"header": "UI tabs (bottom row)", "rows": [
+			["Construct",  "Place buildings (Production / Structures / Lighting / Comms)"],
+			["Inventory",  "Pooled team resources, with search"],
+			["Units",      "Per-unit stats + character inventory + equipment slots"],
+			["Work",       "Per-unit task priorities (HIGH / MED / LOW / OFF)"],
+			["Orders",     "Bulk commands — Repair, Harvest, Mine, Demolish, Cancel"],
+			["Guide",      "Item glossary — descriptions and where to get every item"],
+		]},
+		{"header": "Useful right-clicks", "rows": [
+			["Right-click tree / rock",   "Order harvest / mine"],
+			["Right-click crab corpse?",  "Inspect / loot leftovers from supply crates"],
+			["Right-click Fabricator",    "Open craft panel"],
+			["Right-click Comm Antenna",  "Start the channel sequence"],
+			["Right-click blueprint",     "Cancel + refund materials"],
+			["Right-click downed ally",   "Send the closest live unit to revive"],
+		]},
+	]
+
+	for section: Dictionary in sections:
+		var header := Label.new()
+		header.text = String(section.header)
+		header.add_theme_font_size_override("font_size", 13)
+		header.modulate = Color(0.65, 0.78, 0.95, 0.95)
+		col.add_child(header)
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 14)
+		grid.add_theme_constant_override("v_separation", 2)
+		for row in section.rows:
+			var key_lbl := Label.new()
+			key_lbl.text = String(row[0])
+			key_lbl.custom_minimum_size = Vector2(170, 0)
+			key_lbl.modulate = Color(0.95, 0.95, 0.65)
+			key_lbl.add_theme_font_size_override("font_size", 11)
+			grid.add_child(key_lbl)
+			var desc_lbl := Label.new()
+			desc_lbl.text = String(row[1])
+			desc_lbl.add_theme_font_size_override("font_size", 11)
+			desc_lbl.modulate = Color(0.88, 0.88, 0.92)
+			desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			grid.add_child(desc_lbl)
+		col.add_child(grid)
+
+	# Back button sits OUTSIDE the scroll so it's always visible at the
+	# bottom of the panel, no matter how far the player has scrolled.
+	_add_btn(outer, "Back", _on_controls_back)
+	return outer
 
 
 func _build_slot_row(slot: int) -> HBoxContainer:
@@ -153,8 +253,17 @@ func _on_save() -> void:
 	var slot: int = SaveManager.current_slot
 	if slot < 0:
 		slot = 0
-	SaveManager.create_or_touch(slot)
-	_show_toast("Saved.")
+	# Pull the live snapshot from the running Main scene and persist it.
+	# Falls back to a metadata-only stub if Main isn't reachable for any
+	# reason (defensive — shouldn't happen since save is only available
+	# while Main is the active scene).
+	var main_node: Node = get_tree().root.get_node_or_null("Main")
+	if main_node != null and main_node.has_method("serialize_run"):
+		SaveManager.write_run_data(slot, main_node.serialize_run())
+		_show_toast("Saved.")
+	else:
+		SaveManager.create_or_touch(slot)
+		_show_toast("Saved (metadata only).")
 
 
 func _on_load_show() -> void:
@@ -167,8 +276,23 @@ func _on_load_back() -> void:
 	_root_view.visible = true
 
 
+func _on_controls_show() -> void:
+	_root_view.visible = false
+	_controls_view.visible = true
+
+
+func _on_controls_back() -> void:
+	_controls_view.visible = false
+	_root_view.visible = true
+
+
 func _on_load_slot(slot: int) -> void:
-	SaveManager.create_or_touch(slot)
+	# Queue the slot for Main._apply_pending_load to consume after the
+	# scene reloads. current_slot is updated so future Saves overwrite
+	# this slot rather than slot 0. We don't write anything here — read
+	# happens on the new Main's _ready.
+	SaveManager.queued_load_slot = slot
+	SaveManager.current_slot = slot
 	SaveManager.next_scene = MAIN_SCENE
 	get_tree().paused = false
 	get_tree().change_scene_to_file(LOADING_SCENE)

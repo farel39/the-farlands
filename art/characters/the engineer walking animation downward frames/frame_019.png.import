@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://mijj2qqf0fjm"
-path="res://.godot/imported/frame_019.png-744f9461dc580d3593a6deaa9d685fb9.ctex"
+path.s3tc="res://.godot/imported/frame_019.png-744f9461dc580d3593a6deaa9d685fb9.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the engineer walking animation downward frames/frame_019.png"
-dest_files=["res://.godot/imported/frame_019.png-744f9461dc580d3593a6deaa9d685fb9.ctex"]
+dest_files=["res://.godot/imported/frame_019.png-744f9461dc580d3593a6deaa9d685fb9.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

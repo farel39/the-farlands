@@ -11,7 +11,17 @@ var inspect_lines: Dictionary = {}  # object_type → Array of lines
 var health: float = 100.0
 var max_health: float = 100.0
 var inventory: Dictionary = {}  # item_name → count
-var equipment: Dictionary = {"Head": "", "L.Arm": "", "R.Arm": "", "Legs": ""}
+
+# Equipped gear, keyed by GearDefs slot string ("weapon", "head", "body").
+# Empty string = nothing in that slot. Bonuses from equipped items are
+# baked into the live stat fields (attack_damage, max_health, speed, …)
+# at equip time and reverted at unequip; we only track the slot→item map
+# here so the inventory UI can show what's worn.
+var equipped: Dictionary = {
+	"weapon": "",
+	"head":   "",
+	"body":   "",
+}
 
 # Work-priority scheduler. Each task type has a priority level — higher levels
 # are picked first by Main._assign_tasks; ties go to the closest unit. OFF

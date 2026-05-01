@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cfgnvcs6d716f"
-path="res://.godot/imported/revival injector realistic.png-cf4d14aab3a39b3e700e4eb492aa1280.ctex"
+path.s3tc="res://.godot/imported/revival injector realistic.png-cf4d14aab3a39b3e700e4eb492aa1280.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/items/revival injector realistic.png"
-dest_files=["res://.godot/imported/revival injector realistic.png-cf4d14aab3a39b3e700e4eb492aa1280.ctex"]
+dest_files=["res://.godot/imported/revival injector realistic.png-cf4d14aab3a39b3e700e4eb492aa1280.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

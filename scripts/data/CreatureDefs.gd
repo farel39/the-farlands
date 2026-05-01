@@ -55,6 +55,10 @@ const DEFS: Dictionary = {
 		"attack_damage": 9,
 		"attack_cooldown": 1.0,
 		"attack_range_tiles": 1.0,
+		# Predator growl, fired once when the stalker acquires a target.
+		# Crab.gd reads this and plays the one-shot at the creature's
+		# position; an empty / missing field disables the cue.
+		"growl_sound": "res://audio/creatures/beast growl sound effect.mp3",
 		"drops": [
 			{"item": "Stalker Fang", "min": 1, "max": 1, "chance": 1.0},
 			{"item": "Crab Shell", "min": 1, "max": 1, "chance": 0.4},

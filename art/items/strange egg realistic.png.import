@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://q4gd8ht2xde"
-path="res://.godot/imported/strange egg realistic.png-6a79b7cd1ce7adf437585b74e5d8fe6d.ctex"
+path.s3tc="res://.godot/imported/strange egg realistic.png-6a79b7cd1ce7adf437585b74e5d8fe6d.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/items/strange egg realistic.png"
-dest_files=["res://.godot/imported/strange egg realistic.png-6a79b7cd1ce7adf437585b74e5d8fe6d.ctex"]
+dest_files=["res://.godot/imported/strange egg realistic.png-6a79b7cd1ce7adf437585b74e5d8fe6d.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

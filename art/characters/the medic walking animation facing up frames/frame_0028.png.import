@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b6uludscn6g1x"
-path="res://.godot/imported/frame_0028.png-bf5b229b45e6e0538347c69a77a75b19.ctex"
+path.s3tc="res://.godot/imported/frame_0028.png-bf5b229b45e6e0538347c69a77a75b19.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the medic walking animation facing up frames/frame_0028.png"
-dest_files=["res://.godot/imported/frame_0028.png-bf5b229b45e6e0538347c69a77a75b19.ctex"]
+dest_files=["res://.godot/imported/frame_0028.png-bf5b229b45e6e0538347c69a77a75b19.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

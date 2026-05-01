@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ds5s86ehmst6c"
-path="res://.godot/imported/frame_0015.png-bbd1b77448a10f3ed1679f28bbaf5a72.ctex"
+path.s3tc="res://.godot/imported/frame_0015.png-bbd1b77448a10f3ed1679f28bbaf5a72.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the engineer attacking animation sideway frames/frame_0015.png"
-dest_files=["res://.godot/imported/frame_0015.png-bbd1b77448a10f3ed1679f28bbaf5a72.ctex"]
+dest_files=["res://.godot/imported/frame_0015.png-bbd1b77448a10f3ed1679f28bbaf5a72.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

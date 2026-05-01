@@ -314,11 +314,11 @@ func _on_continue() -> void:
 	var slot: int = SaveManager.get_most_recent_slot()
 	if slot < 0:
 		return
-	_launch(slot)
+	_launch(slot, true)
 
 
 func _on_load(slot: int) -> void:
-	_launch(slot)
+	_launch(slot, true)
 
 
 func _on_delete(slot: int) -> void:
@@ -328,8 +328,8 @@ func _on_delete(slot: int) -> void:
 
 
 func _on_start_new(slot: int) -> void:
-	# Empty slot — straight into a fresh game.
-	_launch(slot)
+	# Empty slot — straight into a fresh game (no queued load).
+	_launch(slot, false)
 
 
 func _on_request_overwrite(slot: int) -> void:
@@ -354,7 +354,15 @@ func _on_confirm_cancel() -> void:
 	_on_show_new()
 
 
-func _launch(slot: int) -> void:
+func _launch(slot: int, load_existing: bool = false) -> void:
+	# When `load_existing` is true (Continue / Load Slot), queue the
+	# slot for Main._apply_pending_load to consume after the new scene
+	# finishes initialising. For New Game flows we skip the queue so
+	# the world stays at fresh-spawn defaults.
+	if load_existing:
+		SaveManager.queued_load_slot = slot
+	else:
+		SaveManager.queued_load_slot = -1
 	SaveManager.create_or_touch(slot)
 	SaveManager.next_scene = MAIN_SCENE
 	get_tree().change_scene_to_file(LOADING_SCENE)

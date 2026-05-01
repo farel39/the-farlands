@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b77ssp42dllf5"
-path="res://.godot/imported/comm relay antenna realistic.png-acac0f45ad7d4f19cd663afae44f3e81.ctex"
+path.s3tc="res://.godot/imported/comm relay antenna realistic.png-acac0f45ad7d4f19cd663afae44f3e81.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/structures/comm relay antenna realistic.png"
-dest_files=["res://.godot/imported/comm relay antenna realistic.png-acac0f45ad7d4f19cd663afae44f3e81.ctex"]
+dest_files=["res://.godot/imported/comm relay antenna realistic.png-acac0f45ad7d4f19cd663afae44f3e81.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

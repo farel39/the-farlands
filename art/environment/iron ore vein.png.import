@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bphjshhf1b8yx"
-path="res://.godot/imported/iron ore vein.png-91cd0b52839877b81d348e7c2fed7060.ctex"
+path.s3tc="res://.godot/imported/iron ore vein.png-91cd0b52839877b81d348e7c2fed7060.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/environment/iron ore vein.png"
-dest_files=["res://.godot/imported/iron ore vein.png-91cd0b52839877b81d348e7c2fed7060.ctex"]
+dest_files=["res://.godot/imported/iron ore vein.png-91cd0b52839877b81d348e7c2fed7060.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

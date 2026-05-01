@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://bge0ca6hk8f37"
+path="res://.godot/imported/Craft Item Sound  FX By Lux Aeterna Audio.mp3-8d3fabf1f72d661f8f84004e5a00ae1a.mp3str"
+
+[deps]
+
+source_file="res://audio/work/Craft Item Sound  FX By Lux Aeterna Audio.mp3"
+dest_files=["res://.godot/imported/Craft Item Sound  FX By Lux Aeterna Audio.mp3-8d3fabf1f72d661f8f84004e5a00ae1a.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

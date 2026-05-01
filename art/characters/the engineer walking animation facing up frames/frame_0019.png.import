@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bi4t443j2f78s"
-path="res://.godot/imported/frame_0019.png-e1ee1697dea0979f89b6c23392b9a6c3.ctex"
+path.s3tc="res://.godot/imported/frame_0019.png-e1ee1697dea0979f89b6c23392b9a6c3.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the engineer walking animation facing up frames/frame_0019.png"
-dest_files=["res://.godot/imported/frame_0019.png-e1ee1697dea0979f89b6c23392b9a6c3.ctex"]
+dest_files=["res://.godot/imported/frame_0019.png-e1ee1697dea0979f89b6c23392b9a6c3.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

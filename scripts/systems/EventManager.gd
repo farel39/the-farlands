@@ -192,6 +192,14 @@ func _fire_brood_mother() -> void:
 	if cell == Vector2(-1, -1):
 		return
 	_spawn_creature("brood_mother", cell)
+	# Boss-arrival growl. Played non-positionally (play_ui) instead of
+	# play_2d at the spawn cell, because the brood mother spawns 14+
+	# tiles from any unit — at that distance the AudioStreamPlayer2D's
+	# default max_distance attenuation rolls the volume off to near-
+	# silence by the time the sound reaches the camera. The growl is
+	# meant to be unmissable boss-arrival cue, so positional accuracy
+	# is sacrificed for guaranteed audibility.
+	AudioManager.play_ui(Sounds.MONSTER_GROWL)
 
 
 # ── Branching choice events ─────────────────────────────────────────────────

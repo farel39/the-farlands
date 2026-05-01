@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://dvaiev4173f2d"
+path="res://.godot/imported/comm relay sound effect.mp3-38fef9afd0156840a0d42e07d7dd19ec.mp3str"
+
+[deps]
+
+source_file="res://audio/events/comm relay sound effect.mp3"
+dest_files=["res://.godot/imported/comm relay sound effect.mp3-38fef9afd0156840a0d42e07d7dd19ec.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

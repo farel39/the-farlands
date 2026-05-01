@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://dofilxvrvcqb1"
+path="res://.godot/imported/mine rock.mp3-253051802372ce6c815ea235a60ba732.mp3str"
+
+[deps]
+
+source_file="res://audio/work/mine rock.mp3"
+dest_files=["res://.godot/imported/mine rock.mp3-253051802372ce6c815ea235a60ba732.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

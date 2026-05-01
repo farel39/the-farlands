@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ciqo21rcnhh73"
-path="res://.godot/imported/the engineer realistic facing up.png-df51a7c8cf872660d5e948149f1b2a8b.ctex"
+path.s3tc="res://.godot/imported/the engineer realistic facing up.png-df51a7c8cf872660d5e948149f1b2a8b.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the engineer realistic facing up.png"
-dest_files=["res://.godot/imported/the engineer realistic facing up.png-df51a7c8cf872660d5e948149f1b2a8b.ctex"]
+dest_files=["res://.godot/imported/the engineer realistic facing up.png-df51a7c8cf872660d5e948149f1b2a8b.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

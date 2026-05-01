@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cut53f8hekx34"
-path="res://.godot/imported/tide crawler facing left.png-75a3cef50938f7b56fbcfdd2b8193a39.ctex"
+path.s3tc="res://.godot/imported/tide crawler facing left.png-75a3cef50938f7b56fbcfdd2b8193a39.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/enemies/tide crawler facing left.png"
-dest_files=["res://.godot/imported/tide crawler facing left.png-75a3cef50938f7b56fbcfdd2b8193a39.ctex"]
+dest_files=["res://.godot/imported/tide crawler facing left.png-75a3cef50938f7b56fbcfdd2b8193a39.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

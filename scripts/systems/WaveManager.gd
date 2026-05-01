@@ -282,17 +282,34 @@ func trigger_evac_from_relay() -> void:
 # ── Spawning ─────────────────────────────────────────────────────────────────
 
 func _spawn_wave_crab() -> void:
+	_spawn_wave_crab_keyed("")
+
+
+# Public harassment spawner used by Grid._tick_comm_relays during the relay
+# channel. Forces a random pick from EVAC_SPAWN_POOL (no boss / sky-mawling
+# tier) regardless of state, so we don't accidentally drain a live wave's
+# spawn queue when channeling overlaps with a wave. Spawns at a random
+# map edge, same lifecycle as a wave creature.
+func spawn_harassment_creature() -> void:
+	_spawn_wave_crab_keyed(EVAC_SPAWN_POOL[_rng.randi() % EVAC_SPAWN_POOL.size()])
+
+
+# Shared spawn helper. Pass an empty string to keep the original wave/evac
+# behavior (queue pop or evac pool); pass a specific creature key to force
+# that creature.
+func _spawn_wave_crab_keyed(forced_key: String) -> void:
 	var cell: Vector2 = _pick_edge_cell()
 	if cell == Vector2(-1, -1):
 		return
-	# Pick the creature key:
-	#   - Wave: pop the next entry from the pre-built shuffled queue.
-	#   - Evac: random pick from EVAC_SPAWN_POOL (rotating harassment).
-	var creature_key: String = ""
-	if state == State.WAVE and not _spawn_queue.is_empty():
-		creature_key = _spawn_queue.pop_back()
-	else:
-		creature_key = EVAC_SPAWN_POOL[_rng.randi() % EVAC_SPAWN_POOL.size()]
+	var creature_key: String = forced_key
+	if creature_key == "":
+		# Pick the creature key:
+		#   - Wave: pop the next entry from the pre-built shuffled queue.
+		#   - Evac: random pick from EVAC_SPAWN_POOL (rotating harassment).
+		if state == State.WAVE and not _spawn_queue.is_empty():
+			creature_key = _spawn_queue.pop_back()
+		else:
+			creature_key = EVAC_SPAWN_POOL[_rng.randi() % EVAC_SPAWN_POOL.size()]
 	var def: Dictionary = _CREATURE_DEFS.DEFS.get(creature_key, {})
 	if def.is_empty():
 		return

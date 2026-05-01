@@ -82,6 +82,63 @@ const RECIPES: Array = [
 		"output":  {"Comm Relay Module": 1},
 		"time":    30.0,
 	},
+	# ── Gear ────────────────────────────────────────────────────────────────
+	# Equippable items. Each goes into a unit's Equipment slot via the
+	# character inventory panel (drag inventory item onto the slot).
+	# Costs scale with stat power: cheap basic armor (vest) / expensive
+	# top-tier weapons (coil pistol, bone cleaver). Materials lean into
+	# the source's lore — pistols use ship debris (Metal Scrap +
+	# Electronics), bone cleaver uses Brood Mother fang drops, the cloak
+	# uses Crawler Hide, etc. — so progression naturally gates which
+	# recipe the player can afford first.
+	{
+		"id": "make_crab_shell_vest",
+		"name": "Stitch Crab Shell Vest",
+		"category": "Gear",
+		"inputs":  {"Crab Shell": 6, "Fiber": 3},
+		"output":  {"Crab Shell Vest": 1},
+		"time":    18.0,
+	},
+	{
+		"id": "make_plated_helmet",
+		"name": "Forge Plated Combat Helmet",
+		"category": "Gear",
+		"inputs":  {"Metal Scrap": 4, "Electronics": 1, "Driftwood Piece": 1},
+		"output":  {"Plated Combat Helmet": 1},
+		"time":    22.0,
+	},
+	{
+		"id": "make_stalker_cloak",
+		"name": "Sew Stalker Hide Cloak",
+		"category": "Gear",
+		"inputs":  {"Crawler Hide": 3, "Stalker Fang": 1, "Fiber": 2, "Bioluminescent Algae": 1},
+		"output":  {"Stalker Hide Cloak": 1},
+		"time":    25.0,
+	},
+	{
+		"id": "make_salvaged_pistol",
+		"name": "Assemble Salvaged Pistol",
+		"category": "Gear",
+		"inputs":  {"Metal Scrap": 4, "Electronics": 1, "Driftwood Piece": 2},
+		"output":  {"Salvaged Service Pistol": 1},
+		"time":    20.0,
+	},
+	{
+		"id": "make_bone_cleaver",
+		"name": "Forge Bone-Hewn Cleaver",
+		"category": "Gear",
+		"inputs":  {"Stalker Fang": 2, "Metal Scrap": 3, "Crab Shell": 2},
+		"output":  {"Bone-Hewn Cleaver": 1},
+		"time":    25.0,
+	},
+	{
+		"id": "make_coil_pistol",
+		"name": "Build Bioluminescent Coil Pistol",
+		"category": "Gear",
+		"inputs":  {"Metal Scrap": 5, "Electronics": 3, "Bioluminescent Algae": 4, "Stalker Fang": 1},
+		"output":  {"Bioluminescent Coil Pistol": 1},
+		"time":    35.0,
+	},
 ]
 
 

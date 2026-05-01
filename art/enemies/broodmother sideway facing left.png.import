@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dmhipjs1wul8h"
-path="res://.godot/imported/broodmother sideway facing left.png-8eb778027c6bdbbca29a5e488931696d.ctex"
+path.s3tc="res://.godot/imported/broodmother sideway facing left.png-8eb778027c6bdbbca29a5e488931696d.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/enemies/broodmother sideway facing left.png"
-dest_files=["res://.godot/imported/broodmother sideway facing left.png-8eb778027c6bdbbca29a5e488931696d.ctex"]
+dest_files=["res://.godot/imported/broodmother sideway facing left.png-8eb778027c6bdbbca29a5e488931696d.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

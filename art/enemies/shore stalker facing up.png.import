@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ceo5yg0f5iyby"
-path="res://.godot/imported/shore stalker facing up.png-e645b91f5ddd16e87c45d691f588c7df.ctex"
+path.s3tc="res://.godot/imported/shore stalker facing up.png-e645b91f5ddd16e87c45d691f588c7df.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/enemies/shore stalker facing up.png"
-dest_files=["res://.godot/imported/shore stalker facing up.png-e645b91f5ddd16e87c45d691f588c7df.ctex"]
+dest_files=["res://.godot/imported/shore stalker facing up.png-e645b91f5ddd16e87c45d691f588c7df.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

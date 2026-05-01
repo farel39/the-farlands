@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cxeblcpa8ps4e"
-path="res://.godot/imported/iron chunk realistic.png-6e078e0b806626679cd07bf877511f5b.ctex"
+path.s3tc="res://.godot/imported/iron chunk realistic.png-6e078e0b806626679cd07bf877511f5b.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/items/iron chunk realistic.png"
-dest_files=["res://.godot/imported/iron chunk realistic.png-6e078e0b806626679cd07bf877511f5b.ctex"]
+dest_files=["res://.godot/imported/iron chunk realistic.png-6e078e0b806626679cd07bf877511f5b.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

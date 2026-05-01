@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c52w2qbufhus6"
-path="res://.godot/imported/frame_020.png-f5cf36fa18e75d3f8a493ad15c7444da.ctex"
+path.s3tc="res://.godot/imported/frame_020.png-f5cf36fa18e75d3f8a493ad15c7444da.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the pilot attacking animation facing up frames/frame_020.png"
-dest_files=["res://.godot/imported/frame_020.png-f5cf36fa18e75d3f8a493ad15c7444da.ctex"]
+dest_files=["res://.godot/imported/frame_020.png-f5cf36fa18e75d3f8a493ad15c7444da.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

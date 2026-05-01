@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://y0c6a3o7uulr"
-path="res://.godot/imported/tide pool ground overlay.png-2ac2aaa48e4d365eb0e296dd833b3b59.ctex"
+path.s3tc="res://.godot/imported/tide pool ground overlay.png-2ac2aaa48e4d365eb0e296dd833b3b59.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/environment/tide pool ground overlay.png"
-dest_files=["res://.godot/imported/tide pool ground overlay.png-2ac2aaa48e4d365eb0e296dd833b3b59.ctex"]
+dest_files=["res://.godot/imported/tide pool ground overlay.png-2ac2aaa48e4d365eb0e296dd833b3b59.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c4gx8p1kwqkcq"
-path="res://.godot/imported/frame_025.png-5bfcc7a52f6ef10ab00cabadd87d8aad.ctex"
+path.s3tc="res://.godot/imported/frame_025.png-5bfcc7a52f6ef10ab00cabadd87d8aad.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the engineer attacking animation facing up frames/frame_025.png"
-dest_files=["res://.godot/imported/frame_025.png-5bfcc7a52f6ef10ab00cabadd87d8aad.ctex"]
+dest_files=["res://.godot/imported/frame_025.png-5bfcc7a52f6ef10ab00cabadd87d8aad.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

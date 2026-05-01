@@ -60,6 +60,14 @@ const ITEM_ICONS: Dictionary = {
 	"Stalker Fang":         "res://art/items/stalker fang realistic.png",
 	"Mawling Wing":         "res://art/items/mawling wing realistic.png",
 	"Comm Relay Module":    "res://art/items/comm relay module realistic.png",
+	# Equippable gear — same path convention as raw items so the
+	# inventory grid renders them with their portraits.
+	"Bone-Hewn Cleaver":          "res://art/items/Bone-Hewn Cleaver.png",
+	"Salvaged Service Pistol":    "res://art/items/Salvaged Service Pistol.png",
+	"Bioluminescent Coil Pistol": "res://art/items/Bioluminescent Coil Pistol.png",
+	"Plated Combat Helmet":       "res://art/items/Plated Combat Helmet.png",
+	"Crab Shell Vest":            "res://art/items/Crab Shell Vest.png",
+	"Stalker Hide Cloak":         "res://art/items/Stalker Hide Cloak.png",
 }
 
 const MONOLITH_LINES: Array = [
@@ -105,9 +113,20 @@ var _sel_box: Rect2
 
 var _construct_panel: PanelContainer
 var _construct_vbox: VBoxContainer
+# Current Construct subview: "" = category list, otherwise the category
+# name shown by _show_items. Used by on_inventory_changed to know whether
+# to re-render an items list (so have/need counts stay fresh while the
+# panel is open and the team picks up materials in the background).
+var _construct_current_category: String = ""
 
 var _global_inv_panel: PanelContainer
 var _global_inv_vbox: VBoxContainer
+# Search bar + active filter for the Global Inventory panel. Filter is
+# kept as a separate field (not just read from the LineEdit) so external
+# callers (notify_inventory_changed → on_inventory_changed) can re-render
+# the list without poking the UI directly.
+var _global_inv_search: LineEdit
+var _global_inv_filter: String = ""
 var _global_inv_expanded: Dictionary = {}  # item_name → bool
 
 var _units_panel: PanelContainer
@@ -121,6 +140,11 @@ var _last_drafted_ids: Array = []
 var _bright_btn: Button
 var _invincible_btn: Button
 var _free_mats_btn: Button
+# Debug "Give Item" picker — dropdown + count spinbox in the debug panel
+# for spawning a specific item / quantity into the team's inventory
+# without going through crafting. Useful for testing gear flows.
+var _give_item_picker: OptionButton
+var _give_item_count: SpinBox
 var _test_event_btn: Button
 var _test_event_panel: PanelContainer
 # Debug dropdown — single toggle button at top-right; the four cheat
@@ -141,6 +165,14 @@ var _work_cells: Dictionary = {}  # (unit, task) → Button
 # clicked target, right-click exits the mode. `_command_indicator` is the
 # top-of-screen banner showing the active mode.
 var _orders_btn: Button
+# Item Guide tab — bottom-row glossary listing every item with its
+# acquisition sources. Sits just right of the Orders button. Search
+# bar filters the list by item name (case-insensitive substring).
+var _guide_btn: Button
+var _guide_panel: PanelContainer
+var _guide_vbox: VBoxContainer
+var _guide_search: LineEdit
+var _guide_filter: String = ""
 var _orders_panel: PanelContainer
 var command_mode: String = ""
 var _command_indicator: Label
@@ -157,6 +189,10 @@ var _map_panel: Control
 var _char_inv_panel: PanelContainer
 var _char_inv_unit: Unit = null
 var _char_inv_equip_slots: Dictionary = {}
+# Stats summary RichTextLabel under the equipment slots — populated by
+# _refresh_char_inv_panel so the player sees their effective combat
+# stats update live the moment they equip / unequip gear.
+var _char_inv_stats_lbl: RichTextLabel = null
 var _char_inv_health_bar: ProgressBar
 var _char_inv_portrait: TextureRect
 var _char_inv_name_lbl: Label
@@ -193,6 +229,12 @@ const THREAT_BAR_MAX: float = 100.0
 # from game state every frame.
 var _quest_panel: PanelContainer
 var _quest_lbl: RichTextLabel
+var _quest_collapse_btn: Button
+# Player can toggle the panel between full-list (all five steps) and
+# collapsed (just the active step). Default expanded so first-time players
+# see the full plan; collapse is for when you know the loop and want
+# screen space back.
+var _quest_collapsed: bool = false
 var _wave_banner_main_lbl: Label
 var _wave_banner_sub_lbl: Label
 var _wave_banner_progress: ProgressBar
@@ -203,6 +245,7 @@ var _wave_index: int = 1
 var _endgame_overlay: ColorRect
 var _endgame_label: Label
 var _endgame_stats_lbl: Label
+var _endgame_flavor_lbl: Label
 
 # ── Loot panel ────────────────────────────────────────────────────────────────
 var _loot_panel: PanelContainer
@@ -211,6 +254,11 @@ var _loot_panel: PanelContainer
 # refresh + queue actions know which one to read/write.
 var _craft_panel: PanelContainer
 var _craft_recipes_box: VBoxContainer
+# Same pattern as _global_inv_filter — kept as a separate field so the
+# panel can be re-rendered (e.g. on inventory change) without losing
+# whatever the player typed.
+var _craft_search: LineEdit
+var _craft_filter: String = ""
 var _craft_queue_box: VBoxContainer
 var _craft_progress_bar: ProgressBar
 var _craft_anchor: Vector2 = Vector2(-1, -1)
@@ -234,6 +282,12 @@ var _loot_drop_slots: Array = []
 
 
 func _ready() -> void:
+	# Apply the unified UI theme first so every PanelContainer / Button /
+	# ProgressBar / HSeparator built afterward picks up the new look
+	# automatically. Panels that explicitly override stylebox slots (the
+	# HUD column) continue to win because override > theme.
+	theme = _build_ui_theme()
+
 	_tree_panel = _build_tree_panel()
 	add_child(_tree_panel)
 
@@ -304,9 +358,49 @@ func _ready() -> void:
 	mm_min_btn.anchor_bottom = 1.0
 	mm_min_btn.offset_left   = -48
 	mm_min_btn.offset_right  = -4
-	mm_min_btn.offset_top    = -(MM + 14)
-	mm_min_btn.offset_bottom = -(MM)
+	mm_min_btn.offset_top    = -(MM + 28)
+	mm_min_btn.offset_bottom = -(MM + 14)
 	add_child(mm_min_btn)
+
+	# Auto-draft checkbox — sits just above the Minimize button. Flips
+	# Main.auto_draft so newly selected units get drafted automatically
+	# (no need to click "Draft" / "Draft All" before issuing commands).
+	# Same anchor/offset family as the minimize button so the two stack
+	# tightly in the bottom-right corner with the minimap.
+	var mm_autodraft_cb := CheckBox.new()
+	mm_autodraft_cb.text = "Auto-draft"
+	mm_autodraft_cb.tooltip_text = "When ON, selecting any character (click, drag, shift-click) auto-drafts them. Already-drafted units stay drafted across selection changes."
+	mm_autodraft_cb.add_theme_font_size_override("font_size", 9)
+	mm_autodraft_cb.anchor_left   = 1.0
+	mm_autodraft_cb.anchor_top    = 1.0
+	mm_autodraft_cb.anchor_right  = 1.0
+	mm_autodraft_cb.anchor_bottom = 1.0
+	mm_autodraft_cb.offset_left   = -110
+	mm_autodraft_cb.offset_right  = -4
+	mm_autodraft_cb.offset_top    = -(MM + 58)
+	mm_autodraft_cb.offset_bottom = -(MM + 36)
+	mm_autodraft_cb.toggled.connect(func(on: bool) -> void:
+		var main_n: Node = grid.get_parent()
+		if main_n != null and "auto_draft" in main_n:
+			main_n.auto_draft = on
+			# When flipping ON, force the drafted set to match the
+			# current selection (Dota-style): selected → drafted,
+			# everyone else → undrafted. Gives immediate feedback
+			# instead of waiting for the next selection change.
+			if on and "selected_units" in main_n and "all_units" in main_n:
+				var sel: Dictionary = {}
+				for s in main_n.selected_units:
+					sel[s] = true
+				for u in main_n.all_units:
+					if u == null or not is_instance_valid(u) or not u.has_method("set_drafted"):
+						continue
+					var want_drafted: bool = sel.has(u)
+					if want_drafted and not u.drafted:
+						u.set_drafted(true)
+					elif not want_drafted and u.drafted:
+						u.set_drafted(false)
+	)
+	add_child(mm_autodraft_cb)
 
 	# Restore button — hidden by default, bottom-right, same size as Inventory button
 	var mm_restore_btn := Button.new()
@@ -322,17 +416,6 @@ func _ready() -> void:
 	mm_restore_btn.offset_bottom = 0
 	add_child(mm_restore_btn)
 
-	mm_min_btn.pressed.connect(func():
-		_minimap.visible = false
-		mm_min_btn.visible = false
-		mm_restore_btn.visible = true
-	)
-	mm_restore_btn.pressed.connect(func():
-		_minimap.visible = true
-		mm_min_btn.visible = true
-		mm_restore_btn.visible = false
-	)
-
 	# Expand button — opens a fullscreen-ish version of the minimap with
 	# tooltips on every marker and click-to-recenter. Sits to the left of
 	# the Minimize button.
@@ -346,10 +429,30 @@ func _ready() -> void:
 	mm_expand_btn.anchor_bottom = 1.0
 	mm_expand_btn.offset_left   = -100
 	mm_expand_btn.offset_right  = -52
-	mm_expand_btn.offset_top    = -(MM + 14)
-	mm_expand_btn.offset_bottom = -(MM)
+	mm_expand_btn.offset_top    = -(MM + 28)
+	mm_expand_btn.offset_bottom = -(MM + 14)
 	add_child(mm_expand_btn)
 	mm_expand_btn.pressed.connect(_on_map_expand_pressed)
+
+	# Wire the Minimize / Restore handlers AFTER every minimap-adjacent
+	# control exists so the lambdas can refer to all of them. Minimize
+	# collapses everything in the corner cluster (minimap, expand, auto-
+	# draft checkbox) and shows the restore tab; Restore brings them all
+	# back so the corner returns to its full layout.
+	mm_min_btn.pressed.connect(func():
+		_minimap.visible = false
+		mm_min_btn.visible = false
+		mm_expand_btn.visible = false
+		mm_autodraft_cb.visible = false
+		mm_restore_btn.visible = true
+	)
+	mm_restore_btn.pressed.connect(func():
+		_minimap.visible = true
+		mm_min_btn.visible = true
+		mm_expand_btn.visible = true
+		mm_autodraft_cb.visible = true
+		mm_restore_btn.visible = false
+	)
 
 	_map_panel = _MapPanelControl.new(grid, camera, _all_units)
 	_map_panel.visible = false
@@ -364,15 +467,15 @@ func _ready() -> void:
 func _build_orders_panel() -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.visible = false
+	# Top anchored at y=340 so the panel can't ride up over the HUD column.
 	panel.anchor_left   = 0.0
-	panel.anchor_top    = 1.0
+	panel.anchor_top    = 0.0
 	panel.anchor_right  = 0.0
 	panel.anchor_bottom = 1.0
 	panel.offset_left   = 496
 	panel.offset_right  = 696
+	panel.offset_top    = 340
 	panel.offset_bottom = -44
-	panel.offset_top    = -240
-	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
@@ -410,7 +513,16 @@ func _build_orders_panel() -> PanelContainer:
 		btn.pressed.connect(func(): enter_command_mode(key))
 		vbox.add_child(btn)
 
-	panel.add_child(vbox)
+	# Scroll wrapper — same reason as Construct: prevents the order list
+	# from spilling off the bottom edge on tight viewports or when more
+	# orders are added later.
+	var scroll := ScrollContainer.new()
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(vbox)
+	panel.add_child(scroll)
 	return panel
 
 
@@ -422,6 +534,164 @@ func _on_orders_btn_pressed() -> void:
 		return
 	_close_bottom_panels()
 	_orders_panel.visible = true
+
+
+# Item glossary panel — bottom-row tab listing every registered item with
+# its description and acquisition sources. Same layout family as the
+# other bottom panels: top-clamped at y=340 to stay clear of the HUD
+# column, scrollable interior, search bar pinned at the top.
+func _build_guide_panel() -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.visible = false
+	panel.anchor_left   = 0.0
+	panel.anchor_top    = 0.0
+	panel.anchor_right  = 0.0
+	panel.anchor_bottom = 1.0
+	panel.offset_left   = 620
+	panel.offset_right  = 980
+	panel.offset_top    = 340
+	panel.offset_bottom = -44
+
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 4)
+
+	var header := HBoxContainer.new()
+	var title := Label.new()
+	title.text = "Item Guide"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var close_btn := Button.new()
+	close_btn.text = "×"
+	close_btn.custom_minimum_size = Vector2(28, 0)
+	close_btn.pressed.connect(func(): _guide_panel.visible = false)
+	header.add_child(close_btn)
+	outer.add_child(header)
+	outer.add_child(HSeparator.new())
+
+	_guide_search = LineEdit.new()
+	_guide_search.placeholder_text = "Search items…"
+	_guide_search.clear_button_enabled = true
+	_guide_search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_guide_search.text_changed.connect(func(t: String) -> void:
+		_guide_filter = t.strip_edges().to_lower()
+		_refresh_guide_panel()
+	)
+	outer.add_child(_guide_search)
+
+	# Scroll wrapper so the full ~30-item list fits without overflowing.
+	var scroll := ScrollContainer.new()
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_guide_vbox = VBoxContainer.new()
+	_guide_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_guide_vbox.add_theme_constant_override("separation", 8)
+	scroll.add_child(_guide_vbox)
+	outer.add_child(scroll)
+
+	panel.add_child(outer)
+	return panel
+
+
+func _on_guide_btn_pressed() -> void:
+	if _guide_panel == null:
+		return
+	if _guide_panel.visible:
+		_guide_panel.visible = false
+		return
+	_close_bottom_panels()
+	_refresh_guide_panel()
+	_guide_panel.visible = true
+
+
+# Render every item from ITEM_ICONS (filtered by _guide_filter) as a
+# row: icon + name + description + sources list. Items registered in
+# ITEM_ICONS but missing a GuideDefs entry get a generic fallback so
+# nothing slips through silently.
+func _refresh_guide_panel() -> void:
+	if _guide_vbox == null:
+		return
+	for c in _guide_vbox.get_children():
+		c.queue_free()
+
+	var keys: Array = ITEM_ICONS.keys()
+	keys.sort()
+	var matched: int = 0
+	for item_name: String in keys:
+		if _guide_filter != "" and String(item_name).to_lower().find(_guide_filter) == -1:
+			continue
+		matched += 1
+		_guide_vbox.add_child(_build_guide_entry(item_name))
+	if matched == 0:
+		var empty := Label.new()
+		empty.text = ("No items match \"%s\"." % _guide_filter) if _guide_filter != "" else "No items registered."
+		empty.modulate = Color(0.7, 0.7, 0.7)
+		_guide_vbox.add_child(empty)
+
+
+# Build one entry row: icon + name header on top, description + bullet
+# list of sources below. Uses a PanelContainer per entry so each row is
+# visually framed against the next.
+func _build_guide_entry(item_name: String) -> PanelContainer:
+	var entry: Dictionary = GuideDefs.get_entry(item_name)
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.08, 0.10, 0.13, 0.85)
+	sb.border_color = Color(0.45, 0.55, 0.70, 0.30)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 8
+	sb.content_margin_right = 8
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 6
+	panel.add_theme_stylebox_override("panel", sb)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 4)
+
+	# Header: icon + item name.
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(36, 36)
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	if ITEM_ICONS.has(item_name):
+		icon.texture = load(ITEM_ICONS[item_name]) as Texture2D
+	head.add_child(icon)
+	var name_lbl := Label.new()
+	name_lbl.text = item_name
+	name_lbl.add_theme_font_size_override("font_size", 13)
+	name_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(name_lbl)
+	col.add_child(head)
+
+	# Description.
+	var desc_lbl := Label.new()
+	desc_lbl.text = String(entry.get("description", ""))
+	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc_lbl.add_theme_font_size_override("font_size", 11)
+	desc_lbl.modulate = Color(0.85, 0.85, 0.90)
+	col.add_child(desc_lbl)
+
+	# Sources — bullet list of acquisition paths.
+	var sources_lbl := Label.new()
+	sources_lbl.text = "Sources:"
+	sources_lbl.add_theme_font_size_override("font_size", 10)
+	sources_lbl.modulate = Color(0.65, 0.72, 0.85, 0.85)
+	col.add_child(sources_lbl)
+	for src in entry.get("sources", []):
+		var bullet := Label.new()
+		bullet.text = "  • " + String(src)
+		bullet.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		bullet.add_theme_font_size_override("font_size", 11)
+		bullet.modulate = Color(0.78, 0.85, 0.95)
+		col.add_child(bullet)
+
+	panel.add_child(col)
+	return panel
 
 
 # Public so Main can also exit on input events (right-click) without poking
@@ -447,17 +717,17 @@ func exit_command_mode() -> void:
 func _build_work_panel() -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.visible = false
-	# Bottom-anchored, grows upward from above the Work button — matches the
-	# Construct / Inventory / Units panels for consistent UX.
+	# Top anchored at y=340 so the panel can't ride up over the HUD column.
+	# Bottom anchored 44px above the screen bottom (above the button row).
+	# Matches the Construct / Inventory / Units / Orders panels.
 	panel.anchor_left   = 0.0
-	panel.anchor_top    = 1.0
+	panel.anchor_top    = 0.0
 	panel.anchor_right  = 0.0
 	panel.anchor_bottom = 1.0
 	panel.offset_left   = 372
 	panel.offset_right  = 920
+	panel.offset_top    = 340
 	panel.offset_bottom = -44
-	panel.offset_top    = -360
-	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
 	var vbox := VBoxContainer.new()
 
@@ -486,7 +756,16 @@ func _build_work_panel() -> PanelContainer:
 	_work_grid.add_theme_constant_override("v_separation", 4)
 	vbox.add_child(_work_grid)
 
-	panel.add_child(vbox)
+	# Scroll wrapper — same as Construct / Orders. With many live units, the
+	# priority grid can grow taller than the panel; clipping inside the panel
+	# keeps it from spilling below the screen.
+	var scroll := ScrollContainer.new()
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(vbox)
+	panel.add_child(scroll)
 	return panel
 
 
@@ -720,7 +999,11 @@ func _build_debug_dropdown() -> void:
 	_debug_panel.anchor_top    = 0.0
 	_debug_panel.anchor_right  = 1.0
 	_debug_panel.anchor_bottom = 0.0
-	_debug_panel.offset_left   = -160
+	# Width = 200px. Bumped from 152 so the Give-Item picker can fit long
+	# item names (e.g. "Bioluminescent Coil Pistol") inside the panel
+	# instead of pushing the OptionButton's natural size past the right
+	# edge of the screen.
+	_debug_panel.offset_left   = -208
 	_debug_panel.offset_right  = -8
 	_debug_panel.offset_top    = 40
 	_debug_panel.z_index = 50
@@ -734,6 +1017,38 @@ func _build_debug_dropdown() -> void:
 	hdr.modulate = Color(0.85, 0.85, 0.95)
 	hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(hdr)
+	col.add_child(HSeparator.new())
+
+	# Visualizer toggles — collision, navigable cells, full creature
+	# visibility (ignore fog). Forward to Main's public toggle_* methods
+	# so the actual overlay nodes stay parented to Grid where they belong.
+	var coll_btn := Button.new()
+	coll_btn.text = "Show Collision"
+	coll_btn.custom_minimum_size = Vector2(0, 28)
+	coll_btn.pressed.connect(func():
+		var on: bool = grid.get_parent().toggle_collision_overlay()
+		coll_btn.text = "Hide Collision" if on else "Show Collision"
+	)
+	col.add_child(coll_btn)
+
+	var nav_btn := Button.new()
+	nav_btn.text = "Show Navigable"
+	nav_btn.custom_minimum_size = Vector2(0, 28)
+	nav_btn.pressed.connect(func():
+		var on: bool = grid.get_parent().toggle_nav_overlay()
+		nav_btn.text = "Hide Navigable" if on else "Show Navigable"
+	)
+	col.add_child(nav_btn)
+
+	var creatures_btn := Button.new()
+	creatures_btn.text = "Show Creatures"
+	creatures_btn.custom_minimum_size = Vector2(0, 28)
+	creatures_btn.pressed.connect(func():
+		var on: bool = grid.get_parent().toggle_show_creatures()
+		creatures_btn.text = "Hide Creatures" if on else "Show Creatures"
+	)
+	col.add_child(creatures_btn)
+
 	col.add_child(HSeparator.new())
 
 	# Brightness toggle.
@@ -767,6 +1082,54 @@ func _build_debug_dropdown() -> void:
 	_test_event_btn.pressed.connect(_on_test_event_btn_pressed)
 	col.add_child(_test_event_btn)
 
+	col.add_child(HSeparator.new())
+
+	# Give-item picker — dropdown of every registered item icon plus a
+	# count spinbox, then a Give button that drops the chosen quantity
+	# into the first live unit's inventory. Used to test gear / craft
+	# flows without grinding for materials. Routes through
+	# notify_inventory_changed so deferred build tasks waiting on stock
+	# wake up immediately.
+	var give_lbl := Label.new()
+	give_lbl.text = "Give Item"
+	give_lbl.add_theme_font_size_override("font_size", 10)
+	give_lbl.modulate = Color(0.65, 0.72, 0.85, 0.85)
+	col.add_child(give_lbl)
+
+	_give_item_picker = OptionButton.new()
+	_give_item_picker.tooltip_text = "Pick an item to spawn into the team's inventory."
+	_give_item_picker.custom_minimum_size = Vector2(0, 26)
+	# Without these, OptionButton sizes to its longest item label (e.g.
+	# "Bioluminescent Coil Pistol") and pushes the whole debug panel
+	# wider than its anchored width — clip_text + EXPAND_FILL pin it to
+	# the column's actual width and ellipsise overflow.
+	_give_item_picker.clip_text = true
+	_give_item_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Sort alphabetically so a long roster stays scannable; OptionButton
+	# adds in insertion order so we sort the keys ourselves first.
+	var sorted_items: Array = ITEM_ICONS.keys()
+	sorted_items.sort()
+	for item_name: String in sorted_items:
+		_give_item_picker.add_item(item_name)
+	col.add_child(_give_item_picker)
+
+	var give_row := HBoxContainer.new()
+	give_row.add_theme_constant_override("separation", 4)
+	_give_item_count = SpinBox.new()
+	_give_item_count.min_value = 1
+	_give_item_count.max_value = 999
+	_give_item_count.step = 1
+	_give_item_count.value = 1
+	_give_item_count.custom_minimum_size = Vector2(54, 26)
+	give_row.add_child(_give_item_count)
+	var give_btn := Button.new()
+	give_btn.text = "Give"
+	give_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	give_btn.custom_minimum_size = Vector2(0, 26)
+	give_btn.pressed.connect(_on_give_item_btn_pressed)
+	give_row.add_child(give_btn)
+	col.add_child(give_row)
+
 	_debug_panel.add_child(col)
 	add_child(_debug_panel)
 
@@ -798,6 +1161,36 @@ func _on_free_mats_btn_pressed() -> void:
 	var tween := create_tween()
 	tween.tween_property(_free_mats_btn, "modulate", Color(1, 1, 1), 0.4)
 	# Wake any deferred builds waiting on materials.
+	var main_node: Node = grid.get_parent()
+	if main_node != null and main_node.has_method("notify_inventory_changed"):
+		main_node.notify_inventory_changed()
+
+
+# Debug — drop the picker's selected item × spinbox count into the first
+# live unit's inventory. Mirrors the recipient-finding logic from Free
+# Mats so dropped gear ends up on someone who can actually use it (not
+# a dead / downed / evacuated body). Notifies inventory listeners so the
+# Construct catalog, Craft panel, and quest tracker refresh immediately.
+func _on_give_item_btn_pressed() -> void:
+	if _give_item_picker == null or _give_item_picker.item_count <= 0:
+		return
+	var item_name: String = _give_item_picker.get_item_text(_give_item_picker.selected)
+	var count: int = max(1, int(_give_item_count.value))
+	var recipient: Unit = null
+	for u in _all_units:
+		if not is_instance_valid(u):
+			continue
+		var unit_node: Unit = u as Unit
+		if unit_node.is_dead() or unit_node.is_downed or unit_node.evacuated:
+			continue
+		recipient = unit_node
+		break
+	if recipient == null:
+		return
+	recipient.data.inventory[item_name] = int(recipient.data.inventory.get(item_name, 0)) + count
+	# Same toast feedback the regular pickup flow uses, so the player
+	# sees what just landed.
+	notify_loot_batch(recipient.global_position, {item_name: count})
 	var main_node: Node = grid.get_parent()
 	if main_node != null and main_node.has_method("notify_inventory_changed"):
 		main_node.notify_inventory_changed()
@@ -949,15 +1342,29 @@ func _build_construct_ui() -> void:
 	_construct_panel = PanelContainer.new()
 	_construct_panel.visible = false
 	_construct_panel.anchor_left   = 0.0
-	_construct_panel.anchor_top    = 1.0
+	# Top anchored to screen-top (offset 340) so the panel can't extend
+	# above the HUD column. Bottom anchored to screen-bottom (offset -44)
+	# so it always sits just above the bottom button row. Adapts to any
+	# viewport height — content scrolls inside if needed.
+	_construct_panel.anchor_top    = 0.0
 	_construct_panel.anchor_right  = 0.0
 	_construct_panel.anchor_bottom = 1.0
 	_construct_panel.offset_left   = 0
 	_construct_panel.offset_right  = 260
+	_construct_panel.offset_top    = 340
 	_construct_panel.offset_bottom = -44
-	_construct_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	# Scroll wrapper so a long category list (lots of buildings in one
+	# category) doesn't push content past the panel's bottom edge and off
+	# the screen. The panel still has a fixed height bounded by offset_top
+	# / offset_bottom; ScrollContainer clips overflow inside that box.
+	var construct_scroll := ScrollContainer.new()
+	construct_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	construct_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	construct_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 	_construct_vbox = VBoxContainer.new()
-	_construct_panel.add_child(_construct_vbox)
+	_construct_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	construct_scroll.add_child(_construct_vbox)
+	_construct_panel.add_child(construct_scroll)
 	add_child(_construct_panel)
 
 	# "Construct" button — bottom-left, above nothing
@@ -977,17 +1384,32 @@ func _build_construct_ui() -> void:
 	# Global inventory panel — grows upward from above the inventory button
 	_global_inv_panel = PanelContainer.new()
 	_global_inv_panel.visible = false
+	# Top anchored at y=340 so the panel can't ride up over the HUD column.
+	# Bottom anchored 44px above the screen bottom (above the button row).
 	_global_inv_panel.anchor_left   = 0.0
-	_global_inv_panel.anchor_top    = 1.0
+	_global_inv_panel.anchor_top    = 0.0
 	_global_inv_panel.anchor_right  = 0.0
 	_global_inv_panel.anchor_bottom = 1.0
 	_global_inv_panel.offset_left   = 124
 	_global_inv_panel.offset_right  = 400
+	_global_inv_panel.offset_top    = 340
 	_global_inv_panel.offset_bottom = -44
-	_global_inv_panel.offset_top    = -500
-	_global_inv_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	# Outer VBox so the search bar can sit pinned at the top while the
+	# scrollable item list takes the remaining vertical space.
+	var inv_outer := VBoxContainer.new()
+	inv_outer.add_theme_constant_override("separation", 4)
+	inv_outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_global_inv_search = LineEdit.new()
+	_global_inv_search.placeholder_text = "Search inventory…"
+	_global_inv_search.clear_button_enabled = true
+	_global_inv_search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_global_inv_search.text_changed.connect(func(t: String) -> void:
+		_global_inv_filter = t.strip_edges().to_lower()
+		_refresh_global_inventory()
+	)
+	inv_outer.add_child(_global_inv_search)
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(0, 0)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -995,7 +1417,8 @@ func _build_construct_ui() -> void:
 	_global_inv_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_global_inv_vbox.add_theme_constant_override("separation", 32)
 	scroll.add_child(_global_inv_vbox)
-	_global_inv_panel.add_child(scroll)
+	inv_outer.add_child(scroll)
+	_global_inv_panel.add_child(inv_outer)
 	add_child(_global_inv_panel)
 
 	# "Inventory" button — sits right of Construct
@@ -1015,15 +1438,15 @@ func _build_construct_ui() -> void:
 	# Units panel — grows upward, scrollable
 	_units_panel = PanelContainer.new()
 	_units_panel.visible = false
+	# Top anchored at y=340 so the panel can't ride up over the HUD column.
 	_units_panel.anchor_left   = 0.0
-	_units_panel.anchor_top    = 1.0
+	_units_panel.anchor_top    = 0.0
 	_units_panel.anchor_right  = 0.0
 	_units_panel.anchor_bottom = 1.0
 	_units_panel.offset_left   = 248
 	_units_panel.offset_right  = 850
+	_units_panel.offset_top    = 340
 	_units_panel.offset_bottom = -44
-	_units_panel.offset_top    = -500
-	_units_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	var units_scroll := ScrollContainer.new()
 	units_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	units_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -1082,6 +1505,27 @@ func _build_construct_ui() -> void:
 	_orders_btn.pressed.connect(_on_orders_btn_pressed)
 	add_child(_orders_btn)
 
+	# "Guide" button + panel — bottom-row item glossary. Same anchor
+	# pattern as the other bottom panels so it uses the existing
+	# top-clamp (offset_top=340) to stay clear of the HUD column, and
+	# the ScrollContainer wrapper so a long item list can scroll inside
+	# the panel bounds.
+	_guide_panel = _build_guide_panel()
+	add_child(_guide_panel)
+	_guide_btn = Button.new()
+	_guide_btn.text = "Guide"
+	_guide_btn.tooltip_text = "Item glossary — descriptions and where to get every resource, drop, and crafted item."
+	_guide_btn.anchor_left   = 0.0
+	_guide_btn.anchor_top    = 1.0
+	_guide_btn.anchor_right  = 0.0
+	_guide_btn.anchor_bottom = 1.0
+	_guide_btn.offset_left   = 620
+	_guide_btn.offset_right  = 740
+	_guide_btn.offset_top    = -40
+	_guide_btn.offset_bottom = 0
+	_guide_btn.pressed.connect(_on_guide_btn_pressed)
+	add_child(_guide_btn)
+
 	# Command-mode banner — pinned to the top, hidden until a mode is active.
 	_command_indicator = Label.new()
 	_command_indicator.visible = false
@@ -1091,8 +1535,12 @@ func _build_construct_ui() -> void:
 	_command_indicator.anchor_bottom = 0.0
 	_command_indicator.offset_left   = -260
 	_command_indicator.offset_right  = 260
-	_command_indicator.offset_top    = 44
-	_command_indicator.offset_bottom = 70
+	# Sits just under the top-center character HUD strip (the avatar
+	# cards live at y=6..76). Pushing the indicator past the bottom of
+	# the avatar wrapper keeps the mode banner clear of portraits and
+	# health bars while staying centered above the play area.
+	_command_indicator.offset_top    = 84
+	_command_indicator.offset_bottom = 110
 	_command_indicator.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_command_indicator.modulate = Color(1.0, 0.85, 0.30)
 	_command_indicator.add_theme_font_size_override("font_size", 14)
@@ -1109,6 +1557,8 @@ func _close_bottom_panels() -> void:
 		_work_panel.visible = false
 	if _orders_panel != null:
 		_orders_panel.visible = false
+	if _guide_panel != null:
+		_guide_panel.visible = false
 
 
 func _on_construct_btn_pressed() -> void:
@@ -1120,6 +1570,7 @@ func _on_construct_btn_pressed() -> void:
 
 
 func _show_categories() -> void:
+	_construct_current_category = ""
 	for c in _construct_vbox.get_children():
 		c.queue_free()
 	var title := Label.new()
@@ -1135,6 +1586,7 @@ func _show_categories() -> void:
 
 
 func _show_items(category: String) -> void:
+	_construct_current_category = category
 	for c in _construct_vbox.get_children():
 		c.queue_free()
 	var back := Button.new()
@@ -1158,15 +1610,20 @@ func _show_items(category: String) -> void:
 		row.add_child(icon)
 		# Name + cost label
 		var info_col := VBoxContainer.new()
+		info_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var name_lbl := Label.new()
 		name_lbl.text = bname
 		info_col.add_child(name_lbl)
-		var cost_parts: Array = []
-		for item in def.cost:
-			cost_parts.append("%s ×%d" % [item, def.cost[item]])
-		var cost_lbl := Label.new()
-		cost_lbl.text = ", ".join(cost_parts)
-		cost_lbl.modulate = Color(0.75, 0.75, 0.75)
+		# Cost line — BBCode so each ingredient can color its "have/need"
+		# count green when satisfied or red when short. Reads at a glance
+		# without forcing the player to switch to the inventory tab.
+		var cost_lbl := RichTextLabel.new()
+		cost_lbl.bbcode_enabled = true
+		cost_lbl.fit_content = true
+		cost_lbl.scroll_active = false
+		cost_lbl.add_theme_font_size_override("normal_font_size", 11)
+		cost_lbl.modulate = Color(0.85, 0.85, 0.88)
+		cost_lbl.text = _format_cost_bbcode(def.cost)
 		info_col.add_child(cost_lbl)
 		row.add_child(info_col)
 		# Place button
@@ -1212,9 +1669,21 @@ func _refresh_global_inventory() -> void:
 		for item in src.inv:
 			totals[item] = totals.get(item, 0) + src.inv[item]
 
-	if totals.is_empty():
+	# Apply the search filter (case-insensitive substring match). Empty
+	# filter = show everything. Filtering at the totals level (after
+	# aggregation) is fine because the per-character expansion only fires
+	# when the player taps the row, and each row is keyed by item name.
+	var filtered_keys: Array = []
+	for item in totals.keys():
+		if _global_inv_filter == "" or String(item).to_lower().find(_global_inv_filter) != -1:
+			filtered_keys.append(item)
+
+	if filtered_keys.is_empty():
 		var lbl := Label.new()
-		lbl.text = "No resources found."
+		if totals.is_empty():
+			lbl.text = "No resources found."
+		else:
+			lbl.text = "No items match \"%s\"." % _global_inv_filter
 		_global_inv_vbox.add_child(lbl)
 		return
 
@@ -1223,7 +1692,7 @@ func _refresh_global_inventory() -> void:
 	_global_inv_vbox.add_child(title)
 	_global_inv_vbox.add_child(HSeparator.new())
 
-	for item in totals:
+	for item in filtered_keys:
 		var expanded: bool = _global_inv_expanded.get(item, false)
 
 		# Clickable header row: icon + name + total + arrow
@@ -1613,47 +2082,46 @@ func _build_char_inv_panel() -> PanelContainer:
 
 	# --- Equipment section ---
 	var equip_vbox := VBoxContainer.new()
-	equip_vbox.custom_minimum_size = Vector2(170, 0)
+	equip_vbox.custom_minimum_size = Vector2(220, 0)
+	equip_vbox.add_theme_constant_override("separation", 6)
 
 	var equip_lbl := Label.new()
 	equip_lbl.text = "Equipment"
 	equip_vbox.add_child(equip_lbl)
 
-	# 3×3 grid representing body silhouette
-	var equip_grid := GridContainer.new()
-	equip_grid.columns = 3
-	equip_grid.add_theme_constant_override("h_separation", 2)
-	equip_grid.add_theme_constant_override("v_separation", 2)
-
-	const EQUIP_LAYOUT := ["", "Head", "", "L.Arm", "Body", "R.Arm", "", "Legs", ""]
+	# Three horizontal slots: Weapon | Head | Body. Each is a custom
+	# _GearSlot Control that accepts drops from the inventory grid (see
+	# _InvDropSlot._get_drag_data) and routes equip / unequip through the
+	# unit's equip_gear / unequip_gear API. Right-click a slot to
+	# unequip the current piece back into the inventory.
+	var equip_row := HBoxContainer.new()
+	equip_row.add_theme_constant_override("separation", 4)
 	_char_inv_equip_slots.clear()
-	for slot_name: String in EQUIP_LAYOUT:
-		if slot_name == "":
-			var spacer := Control.new()
-			spacer.custom_minimum_size = Vector2(52, 52)
-			equip_grid.add_child(spacer)
-		elif slot_name == "Body":
-			var body_panel := Panel.new()
-			body_panel.custom_minimum_size = Vector2(52, 52)
-			equip_grid.add_child(body_panel)
-		else:
-			var slot := PanelContainer.new()
-			slot.custom_minimum_size = Vector2(52, 52)
-			slot.tooltip_text = slot_name
-			var lbl := Label.new()
-			lbl.text = slot_name
-			lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			slot.add_child(lbl)
-			equip_grid.add_child(slot)
-			_char_inv_equip_slots[slot_name] = slot
+	for slot_key in [GearDefs.SLOT_WEAPON, GearDefs.SLOT_HEAD, GearDefs.SLOT_BODY]:
+		var gs := _GearSlot.new(self, slot_key)
+		equip_row.add_child(gs)
+		_char_inv_equip_slots[slot_key] = gs
+	equip_vbox.add_child(equip_row)
 
-	equip_vbox.add_child(equip_grid)
 	equip_vbox.add_child(HSeparator.new())
 
-	_char_inv_health_bar = _make_health_bar(160, 16)
+	# Stats panel — shows the unit's effective combat stats. Refreshed
+	# alongside the rest of the panel via _refresh_char_inv_panel so it
+	# stays accurate after equip / unequip toggles.
+	var stats_lbl := Label.new()
+	stats_lbl.text = "Stats"
+	equip_vbox.add_child(stats_lbl)
+	_char_inv_stats_lbl = RichTextLabel.new()
+	_char_inv_stats_lbl.bbcode_enabled = true
+	_char_inv_stats_lbl.fit_content = true
+	_char_inv_stats_lbl.scroll_active = false
+	_char_inv_stats_lbl.add_theme_font_size_override("normal_font_size", 11)
+	_char_inv_stats_lbl.modulate = Color(0.92, 0.92, 0.95)
+	equip_vbox.add_child(_char_inv_stats_lbl)
+
+	equip_vbox.add_child(HSeparator.new())
+
+	_char_inv_health_bar = _make_health_bar(200, 16)
 	_char_inv_health_bar.tooltip_text = "Health"
 	equip_vbox.add_child(_char_inv_health_bar)
 
@@ -1958,32 +2426,190 @@ func _build_loot_panel() -> PanelContainer:
 # Top-center pill: main line shows wave state ("PEACE — Wave 2 in 42s",
 # "WAVE 2 — incoming!", "EVAC — reach the marker"). Sub line shows transient
 # announcements emitted by WaveManager.banner_message (auto-fades after duration).
+# Single column container wrapping the wave banner, disturbance bar, and
+# quest panel. VBoxContainer with fixed separation so the three panels
+# auto-stack tightly without per-panel offset_top math (which broke any
+# time a panel's content height changed — e.g., the quest collapse).
+var _hud_column: VBoxContainer
+
+
+# Project-wide UI theme. Built once in _ready and assigned to the GUI Control
+# so every descendant PanelContainer, Button, ProgressBar, HSeparator, and
+# Label inherits the same translucent-dark-with-soft-cyan-border look. Panels
+# that explicitly override their "panel" stylebox keep their custom appearance
+# (the HUD column does this for tighter local control), but everything else
+# (loot panel, unit panel, construct, units, work, orders, fabricator craft,
+# choice events, endgame overlay, etc.) picks up the unified style for free.
+func _build_ui_theme() -> Theme:
+	var t := Theme.new()
+
+	# PanelContainer — the workhorse. Same style as the HUD column so the
+	# floating popups (unit / loot / craft / etc.) feel like part of the
+	# same UI family.
+	var panel_sb := StyleBoxFlat.new()
+	panel_sb.bg_color = Color(0.06, 0.08, 0.11, 0.92)
+	panel_sb.border_color = Color(0.55, 0.65, 0.78, 0.45)
+	panel_sb.set_border_width_all(1)
+	panel_sb.set_corner_radius_all(6)
+	panel_sb.content_margin_left = 12
+	panel_sb.content_margin_right = 12
+	panel_sb.content_margin_top = 10
+	panel_sb.content_margin_bottom = 10
+	t.set_stylebox("panel", "PanelContainer", panel_sb)
+	# Plain Panel uses a flatter style (no padding) so panels that nest
+	# their own MarginContainer don't double-pad.
+	var bare_panel_sb: StyleBoxFlat = panel_sb.duplicate()
+	bare_panel_sb.content_margin_left = 0
+	bare_panel_sb.content_margin_right = 0
+	bare_panel_sb.content_margin_top = 0
+	bare_panel_sb.content_margin_bottom = 0
+	t.set_stylebox("panel", "Panel", bare_panel_sb)
+
+	# Button states — subtle gradient between normal/hover/pressed so the
+	# affordance is obvious without being noisy. Matches the panel border
+	# color so buttons feel like inline UI rather than stamped-on widgets.
+	var btn_normal := StyleBoxFlat.new()
+	btn_normal.bg_color = Color(0.10, 0.13, 0.17, 0.95)
+	btn_normal.border_color = Color(0.45, 0.55, 0.70, 0.55)
+	btn_normal.set_border_width_all(1)
+	btn_normal.set_corner_radius_all(4)
+	btn_normal.content_margin_left = 10
+	btn_normal.content_margin_right = 10
+	btn_normal.content_margin_top = 5
+	btn_normal.content_margin_bottom = 5
+	t.set_stylebox("normal", "Button", btn_normal)
+
+	var btn_hover: StyleBoxFlat = btn_normal.duplicate()
+	btn_hover.bg_color = Color(0.16, 0.21, 0.27, 0.95)
+	btn_hover.border_color = Color(0.65, 0.78, 0.92, 0.85)
+	t.set_stylebox("hover", "Button", btn_hover)
+
+	var btn_pressed: StyleBoxFlat = btn_normal.duplicate()
+	btn_pressed.bg_color = Color(0.04, 0.06, 0.09, 0.95)
+	btn_pressed.border_color = Color(0.65, 0.78, 0.92, 0.95)
+	t.set_stylebox("pressed", "Button", btn_pressed)
+
+	var btn_focus: StyleBoxFlat = btn_normal.duplicate()
+	btn_focus.border_color = Color(0.65, 0.78, 0.92, 0.95)
+	t.set_stylebox("focus", "Button", btn_focus)
+
+	var btn_disabled: StyleBoxFlat = btn_normal.duplicate()
+	btn_disabled.bg_color = Color(0.07, 0.09, 0.12, 0.65)
+	btn_disabled.border_color = Color(0.30, 0.35, 0.42, 0.35)
+	t.set_stylebox("disabled", "Button", btn_disabled)
+
+	# Button text colors per state.
+	t.set_color("font_color", "Button", Color(0.92, 0.94, 0.98, 1.0))
+	t.set_color("font_hover_color", "Button", Color(1.0, 1.0, 1.0, 1.0))
+	t.set_color("font_pressed_color", "Button", Color(0.85, 0.90, 1.0, 1.0))
+	t.set_color("font_disabled_color", "Button", Color(0.55, 0.60, 0.68, 0.65))
+
+	# ProgressBar — rounded bg + fill matching the HUD bars so any
+	# health / craft / channel bar in the game feels consistent.
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.10, 0.12, 0.16, 0.95)
+	bar_bg.set_corner_radius_all(3)
+	bar_bg.set_border_width_all(0)
+	t.set_stylebox("background", "ProgressBar", bar_bg)
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = Color(0.45, 0.85, 1.0, 1.0)
+	bar_fill.set_corner_radius_all(3)
+	t.set_stylebox("fill", "ProgressBar", bar_fill)
+
+	# HSeparator — subtle hairline that matches the panel border so it
+	# reads as a section divider rather than a break.
+	var sep_sb := StyleBoxFlat.new()
+	sep_sb.bg_color = Color(0.55, 0.65, 0.78, 0.30)
+	sep_sb.content_margin_top = 2
+	sep_sb.content_margin_bottom = 2
+	t.set_stylebox("separator", "HSeparator", sep_sb)
+
+	# Label default color — slightly off-white so text doesn't feel
+	# stark against the dark panels. Individual labels can still
+	# override modulate for state-specific colors.
+	t.set_color("font_color", "Label", Color(0.92, 0.94, 0.98, 1.0))
+
+	return t
+
+
+# Shared style for the top-left HUD column (wave banner, disturbance bar,
+# quest panel). Translucent dark fill + soft border + rounded corners so
+# the three panels read as one cohesive UI unit.
+func _make_hud_stylebox() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.06, 0.08, 0.11, 0.86)
+	sb.border_color = Color(0.55, 0.65, 0.78, 0.45)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(5)
+	sb.content_margin_left = 7
+	sb.content_margin_right = 7
+	sb.content_margin_top = 5
+	sb.content_margin_bottom = 5
+	return sb
+
+
 func _build_wave_banner() -> void:
+	# Build the column wrapper once, lazily — first panel that's built
+	# triggers it. All three top-left panels live inside this VBox so
+	# they auto-stack with consistent spacing as content shifts.
+	if _hud_column == null:
+		_hud_column = VBoxContainer.new()
+		_hud_column.anchor_left = 0.0
+		_hud_column.anchor_right = 0.0
+		_hud_column.anchor_top = 0.0
+		_hud_column.anchor_bottom = 0.0
+		_hud_column.offset_left = 10
+		_hud_column.offset_top = 10
+		_hud_column.offset_right = 232
+		# Generous bottom offset gives the VBox room to grow downward as
+		# panels expand. ALIGNMENT_BEGIN keeps children pinned to the top.
+		_hud_column.offset_bottom = 1000
+		_hud_column.alignment = BoxContainer.ALIGNMENT_BEGIN
+		_hud_column.add_theme_constant_override("separation", 4)
+		_hud_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hud_column.z_index = 50
+		add_child(_hud_column)
+
 	_wave_banner = PanelContainer.new()
-	_wave_banner.anchor_left = 0.0
-	_wave_banner.anchor_right = 0.0
-	_wave_banner.anchor_top = 0.0
-	_wave_banner.anchor_bottom = 0.0
-	# Top-left HUD column. Wave banner sits at the very top-left so the
-	# player's eye lands on it first; disturbance bar + quest objective
-	# stack underneath.
-	_wave_banner.offset_left = 12
-	_wave_banner.offset_right = 292
-	_wave_banner.offset_top = 12
-	_wave_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_wave_banner.z_index = 50
+	_wave_banner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# MOUSE_FILTER_STOP so the tooltip fires on hover. Clicks just get
+	# eaten — there's no in-panel interactive element here.
+	_wave_banner.mouse_filter = Control.MOUSE_FILTER_STOP
+	_wave_banner.tooltip_text = (
+		"STATUS — current phase of the run.\n\n" +
+		"• PEACE: gather, build, and prep. Bar fills as the next wave nears.\n" +
+		"• WAVE: defend the team until every creature is down.\n" +
+		"• EVAC: once you complete the relay channel, the rescue shuttle arrives. " +
+		"Get every survivor to the shuttle before the timer runs out."
+	)
+	_wave_banner.add_theme_stylebox_override("panel", _make_hud_stylebox())
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 2)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	# Section header — compact, neutral. Lets the main label below carry
+	# the dynamic state (PEACE / WAVE / EVAC / VICTORY / DEFEAT).
+	var hdr := Label.new()
+	hdr.text = "STATUS"
+	hdr.add_theme_font_size_override("font_size", 8)
+	hdr.modulate = Color(0.65, 0.72, 0.85, 0.85)
+	hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	hdr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(hdr)
+
 	_wave_banner_main_lbl = Label.new()
 	_wave_banner_main_lbl.text = "—"
 	_wave_banner_main_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_wave_banner_main_lbl.add_theme_font_size_override("font_size", 14)
+	_wave_banner_main_lbl.add_theme_font_size_override("font_size", 12)
+	_wave_banner_main_lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
+	_wave_banner_main_lbl.add_theme_constant_override("shadow_offset_x", 1)
+	_wave_banner_main_lbl.add_theme_constant_override("shadow_offset_y", 1)
 	_wave_banner_main_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(_wave_banner_main_lbl)
+
 	# Vague "wave is approaching" indicator: fills 0→100% over PEACE_DURATION.
-	# No numeric label — the player reads tension from the bar's fullness, not
-	# a clock. Hidden during WAVE / EVAC / endgame states.
+	# No numeric label — the player reads tension from the bar's fullness,
+	# not a clock. Hidden during WAVE / endgame states.
 	_wave_banner_progress = ProgressBar.new()
 	_wave_banner_progress.show_percentage = false
 	_wave_banner_progress.custom_minimum_size = Vector2(0, 6)
@@ -1991,16 +2617,26 @@ func _build_wave_banner() -> void:
 	_wave_banner_progress.max_value = 1.0
 	_wave_banner_progress.value = 0.0
 	_wave_banner_progress.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Override the bar's bg + fill styles for a cleaner look.
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.10, 0.12, 0.16, 0.95)
+	bar_bg.set_corner_radius_all(3)
+	_wave_banner_progress.add_theme_stylebox_override("background", bar_bg)
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = Color(0.95, 0.65, 0.35)
+	bar_fill.set_corner_radius_all(3)
+	_wave_banner_progress.add_theme_stylebox_override("fill", bar_fill)
 	vbox.add_child(_wave_banner_progress)
+
 	_wave_banner_sub_lbl = Label.new()
 	_wave_banner_sub_lbl.text = ""
 	_wave_banner_sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_wave_banner_sub_lbl.add_theme_font_size_override("font_size", 11)
+	_wave_banner_sub_lbl.add_theme_font_size_override("font_size", 9)
 	_wave_banner_sub_lbl.modulate = Color(1.0, 0.92, 0.55, 1.0)
 	_wave_banner_sub_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(_wave_banner_sub_lbl)
 	_wave_banner.add_child(vbox)
-	add_child(_wave_banner)
+	_hud_column.add_child(_wave_banner)
 	_build_threat_panel()
 	_build_quest_panel()
 
@@ -2012,40 +2648,64 @@ func _build_wave_banner() -> void:
 # the threat climbs so the player can read intensity at a glance.
 func _build_threat_panel() -> void:
 	_threat_panel = PanelContainer.new()
-	# Top-left HUD column — sits directly under the wave banner.
-	_threat_panel.anchor_left = 0.0
-	_threat_panel.anchor_right = 0.0
-	_threat_panel.anchor_top = 0.0
-	_threat_panel.anchor_bottom = 0.0
-	_threat_panel.offset_left = 12
-	_threat_panel.offset_right = 292
-	_threat_panel.offset_top = 80
-	_threat_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_threat_panel.z_index = 50
+	# Stacks naturally below the wave banner inside _hud_column.
+	_threat_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# MOUSE_FILTER_STOP so the tooltip fires on hover.
+	_threat_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_threat_panel.tooltip_text = (
+		"DISTURBANCE — your ecosystem footprint on this alien beach.\n\n" +
+		"Raised by:\n" +
+		"  • Chopping trees\n" +
+		"  • Mining rocks  (more)\n" +
+		"  • Mining ores   (most)\n" +
+		"  • Building structures\n\n" +
+		"NOT raised by looting crates / ship debris or killing enemies — those are free actions.\n\n" +
+		"Higher disturbance = larger waves and deadlier creature types. Be careful what you take from the world.\n\n" +
+		"calm  <  40  <  rising  <  70  <  critical"
+	)
+	_threat_panel.add_theme_stylebox_override("panel", _make_hud_stylebox())
 
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 2)
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	# Header row: "DISTURBANCE" label on the left + state text on the right
+	# (calm / rising / critical) shown via _threat_label. Two-line layout
+	# so the bar has more room than the previous centered label.
+	var hdr_row := HBoxContainer.new()
+	hdr_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var hdr := Label.new()
+	hdr.text = "DISTURBANCE"
+	hdr.add_theme_font_size_override("font_size", 8)
+	hdr.modulate = Color(0.65, 0.72, 0.85, 0.85)
+	hdr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hdr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hdr_row.add_child(hdr)
 	_threat_label = Label.new()
-	_threat_label.text = "Disturbance"
-	_threat_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_threat_label.add_theme_font_size_override("font_size", 10)
-	_threat_label.modulate = Color(0.92, 0.92, 0.95, 0.85)
+	_threat_label.text = "calm"
+	_threat_label.add_theme_font_size_override("font_size", 8)
+	_threat_label.modulate = Color(0.55, 0.85, 0.45, 1.0)
 	_threat_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_child(_threat_label)
+	hdr_row.add_child(_threat_label)
+	col.add_child(hdr_row)
 
+	# Background stylebox stays constant; the fill stylebox gets recolored
+	# in _tick_threat_bar based on threat tier (green / yellow / red).
 	_threat_bar = ProgressBar.new()
 	_threat_bar.show_percentage = false
-	_threat_bar.custom_minimum_size = Vector2(0, 8)
+	_threat_bar.custom_minimum_size = Vector2(0, 7)
 	_threat_bar.min_value = 0.0
 	_threat_bar.max_value = THREAT_BAR_MAX
 	_threat_bar.value = 0.0
 	_threat_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.10, 0.12, 0.16, 0.95)
+	bar_bg.set_corner_radius_all(4)
+	_threat_bar.add_theme_stylebox_override("background", bar_bg)
 	col.add_child(_threat_bar)
 
 	_threat_panel.add_child(col)
-	add_child(_threat_panel)
+	_hud_column.add_child(_threat_panel)
 
 
 # Quest / objective panel — the third row in the top-left HUD column. Lists
@@ -2054,41 +2714,65 @@ func _build_threat_panel() -> void:
 # the active step is highlighted bright, future steps are dim and unchecked.
 func _build_quest_panel() -> void:
 	_quest_panel = PanelContainer.new()
-	_quest_panel.anchor_left = 0.0
-	_quest_panel.anchor_right = 0.0
-	_quest_panel.anchor_top = 0.0
-	_quest_panel.anchor_bottom = 0.0
-	_quest_panel.offset_left = 12
-	_quest_panel.offset_right = 292
-	_quest_panel.offset_top = 116
-	_quest_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_quest_panel.z_index = 50
+	_quest_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Mouse_filter STOP so the collapse button + the tooltip both work.
+	_quest_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_quest_panel.tooltip_text = (
+		"OBJECTIVE — the path from \"just landed\" to \"rescued.\"\n\n" +
+		"1. Search the wreckage. Right-click the crashed ship and any nearby supply crates — they hold the Electronics + Metal Scrap your team needs to bootstrap the Fabricator.\n" +
+		"2. Build a Fabricator (Construct → Production).\n" +
+		"3. Craft a Comm Relay Module at the Fabricator.\n" +
+		"4. Build a Comm Relay Antenna (Construct → Comms).\n" +
+		"5. Right-click the antenna to start channeling. The unit can't fight while channeling — defenders must hold the line.\n" +
+		"6. When the channel completes, the rescue shuttle arrives. Get every survivor to it.\n\n" +
+		"Click ▴ / ▾ to collapse or expand the list."
+	)
+	_quest_panel.add_theme_stylebox_override("panel", _make_hud_stylebox())
 
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 2)
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	# Header row: "OBJECTIVE" label on the left + collapse toggle on the
+	# right. Collapse hides everything except the active step so the panel
+	# only takes one line of screen space when you don't need the full list.
+	var hdr_row := HBoxContainer.new()
+	hdr_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var hdr := Label.new()
-	hdr.text = "Objective"
-	hdr.add_theme_font_size_override("font_size", 10)
-	hdr.modulate = Color(0.92, 0.92, 0.95, 0.85)
-	hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hdr.text = "OBJECTIVE"
+	hdr.add_theme_font_size_override("font_size", 8)
+	hdr.modulate = Color(0.65, 0.72, 0.85, 0.85)
+	hdr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hdr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_child(hdr)
+	hdr_row.add_child(hdr)
+	_quest_collapse_btn = Button.new()
+	_quest_collapse_btn.text = "▴"
+	_quest_collapse_btn.tooltip_text = "Collapse / expand objective list"
+	_quest_collapse_btn.flat = true
+	_quest_collapse_btn.custom_minimum_size = Vector2(18, 14)
+	_quest_collapse_btn.add_theme_font_size_override("font_size", 10)
+	_quest_collapse_btn.pressed.connect(_on_quest_collapse_toggled)
+	hdr_row.add_child(_quest_collapse_btn)
+	col.add_child(hdr_row)
 
-	# RichTextLabel rather than Label so the per-step color spans (active /
-	# done / upcoming) render via BBCode. fit_content makes the panel grow
-	# to fit the lines without a scrollbar.
+	# RichTextLabel so the per-step color spans (active / done / upcoming)
+	# render via BBCode. fit_content makes the panel grow to fit the lines.
 	_quest_lbl = RichTextLabel.new()
 	_quest_lbl.bbcode_enabled = true
 	_quest_lbl.fit_content = true
 	_quest_lbl.scroll_active = false
-	_quest_lbl.add_theme_font_size_override("normal_font_size", 11)
+	_quest_lbl.add_theme_font_size_override("normal_font_size", 10)
 	_quest_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(_quest_lbl)
 
 	_quest_panel.add_child(col)
-	add_child(_quest_panel)
+	_hud_column.add_child(_quest_panel)
+
+
+func _on_quest_collapse_toggled() -> void:
+	_quest_collapsed = not _quest_collapsed
+	if _quest_collapse_btn != null:
+		_quest_collapse_btn.text = "▾" if _quest_collapsed else "▴"
 
 
 # Read game state and render the objective list. Each step is one line
@@ -2102,15 +2786,19 @@ func _tick_quest_panel() -> void:
 		return
 	# Detect game-state milestones in dependency order. The "active" step is
 	# the first one not yet completed; everything before it is done.
+	# Wreckage step: ticks the moment the team has any Electronics or
+	# Metal Scrap in the shared pool. Both come from the crash site
+	# (ship hull + supply crates), so seeing either in inventory means
+	# the player has at least poked at the wreckage. Supply-drop events
+	# can also satisfy this — that's intentional, since alternate paths
+	# to the materials are still valid progression.
+	var wreckage_searched: bool = _team_count("Electronics") > 0 or _team_count("Metal Scrap") > 0
 	var has_fabricator: bool = not grid.fabricators.is_empty()
-	var has_module: bool = false
-	for u in main_node.all_units:
-		if not is_instance_valid(u):
-			continue
-		var unit_node: Unit = u as Unit
-		if int(unit_node.data.inventory.get("Comm Relay Module", 0)) > 0:
-			has_module = true
-			break
+	# Step 2 only ticks when a unit has actually crafted a Comm Relay Module
+	# at a Fabricator this run. Reading the flag (set in Grid._tick_fabricators
+	# when the make_comm_relay_module recipe completes) avoids false-completing
+	# from debug shortcuts like Free Mats that just dump items into inventory.
+	var has_module: bool = "relay_module_crafted" in main_node and bool(main_node.relay_module_crafted)
 	# A relay counts as "built" when it appears in grid.comm_relays. Any
 	# active channel is detected via the relay's `progress` and `completed`
 	# fields.
@@ -2131,6 +2819,7 @@ func _tick_quest_panel() -> void:
 		evac_active = int(main_node.wave_manager.state) == 2
 
 	var steps: Array = [
+		{"text": "Search the wreckage",           "done": wreckage_searched or has_fabricator},
 		{"text": "Build a Fabricator",            "done": has_fabricator},
 		{"text": "Craft a Comm Relay Module",     "done": has_module or has_relay},
 		{"text": "Build a Comm Relay Antenna",    "done": has_relay},
@@ -2150,29 +2839,37 @@ func _tick_quest_panel() -> void:
 		if bool(steps[i].get("active_extra", false)):
 			active_idx = i
 
+	# When collapsed, render only the active step (or "All complete" if the
+	# player has nothing left). Expanded shows every step with prefixes.
 	var lines: Array = []
-	for i in steps.size():
-		var s: Dictionary = steps[i]
-		var done: bool = bool(s.get("done", false))
-		var prefix: String
-		if done:
-			prefix = "[✓] "
-		elif i == active_idx:
-			prefix = "[→] "
+	if _quest_collapsed:
+		if active_idx < 0 or active_idx >= steps.size():
+			lines.append("[color=#7fff9c]All objectives complete[/color]")
 		else:
-			prefix = "[ ] "
-		var line: String = prefix + String(s.text)
-		# Use BBCode color spans so each line shades independently in a
-		# single Label. Active = bright green; done = dim grey-green;
-		# upcoming = neutral dim.
-		var col: String
-		if i == active_idx:
-			col = "#7fff9c"
-		elif done:
-			col = "#6f9080"
-		else:
-			col = "#8a8a92"
-		lines.append("[color=%s]%s[/color]" % [col, line])
+			var s: Dictionary = steps[active_idx]
+			lines.append("[color=#7fff9c][→] %s[/color]" % String(s.text))
+	else:
+		for i in steps.size():
+			var s: Dictionary = steps[i]
+			var done: bool = bool(s.get("done", false))
+			var prefix: String
+			if done:
+				prefix = "[✓] "
+			elif i == active_idx:
+				prefix = "[→] "
+			else:
+				prefix = "[ ] "
+			var line: String = prefix + String(s.text)
+			# Per-line color: bright green for active, dim grey-green for
+			# done, neutral dim for upcoming.
+			var col: String
+			if i == active_idx:
+				col = "#7fff9c"
+			elif done:
+				col = "#6f9080"
+			else:
+				col = "#8a8a92"
+			lines.append("[color=%s]%s[/color]" % [col, line])
 	_quest_lbl.text = "\n".join(lines)
 
 
@@ -2190,32 +2887,37 @@ func _tick_threat_bar() -> void:
 		return
 	var t: float = float(main_node.threat_level)
 	_threat_bar.value = clamp(t, 0.0, THREAT_BAR_MAX)
+	# Color band drives both the bar fill and the state-text on the right
+	# side of the header. Critical state pulses subtly to demand attention.
 	var fill_col: Color
+	var state_text: String
 	if t < 40.0:
-		fill_col = Color(0.35, 0.85, 0.45)  # calm green
+		fill_col = Color(0.35, 0.85, 0.45)
+		state_text = "calm"
 	elif t < 70.0:
-		fill_col = Color(0.95, 0.80, 0.30)  # caution yellow
+		fill_col = Color(0.95, 0.80, 0.30)
+		state_text = "rising"
 	else:
-		fill_col = Color(1.0, 0.40, 0.40)   # critical red
+		var pulse: float = 0.75 + sin(Time.get_ticks_msec() * 0.006) * 0.25
+		fill_col = Color(1.0, 0.40, 0.40, pulse)
+		state_text = "critical"
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = fill_col
+	sb.set_corner_radius_all(4)
 	_threat_bar.add_theme_stylebox_override("fill", sb)
-	# Label hint matches the color band so the text reinforces the bar's
-	# state without the player needing to interpret a percentage.
-	if t < 40.0:
-		_threat_label.text = "Disturbance — calm"
-	elif t < 70.0:
-		_threat_label.text = "Disturbance — rising"
-	else:
-		_threat_label.text = "Disturbance — critical"
+	_threat_label.text = state_text
+	_threat_label.modulate = fill_col
 
 
-# Fullscreen modal shown on VICTORY / DEFEAT. Hidden by default. Centers a
-# title label + two action buttons (Restart / Main Menu) so the player has a
-# way out of the run instead of being stuck on the result screen.
+# Fullscreen modal shown on VICTORY / DEFEAT. Hidden by default. Layout is
+# a centered PanelContainer (matching the HUD's translucent-dark + cyan-
+# border aesthetic) holding: title, flavor subtitle, run-stats block, and
+# the Restart / Main Menu buttons. The flavor subtitle changes per state
+# so the screen doesn't read as a generic "you're done" — it reinforces
+# the wave-defense → evac fiction.
 func _build_endgame_overlay() -> void:
 	_endgame_overlay = ColorRect.new()
-	_endgame_overlay.color = Color(0.0, 0.0, 0.0, 0.78)
+	_endgame_overlay.color = Color(0.0, 0.0, 0.0, 0.82)
 	_endgame_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_endgame_overlay.visible = false
 	_endgame_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -2226,27 +2928,68 @@ func _build_endgame_overlay() -> void:
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_endgame_overlay.add_child(center)
 
+	# Inner panel — gives the victory/defeat content a framed, intentional
+	# feel instead of floating labels on a black void. Stylebox is a beefier
+	# version of the HUD stylebox: thicker border, larger corner radius.
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(560, 0)
+	var card_sb := StyleBoxFlat.new()
+	card_sb.bg_color = Color(0.06, 0.08, 0.11, 0.94)
+	card_sb.border_color = Color(0.45, 0.65, 0.85, 0.55)
+	card_sb.set_border_width_all(2)
+	card_sb.set_corner_radius_all(10)
+	card_sb.content_margin_left = 36
+	card_sb.content_margin_right = 36
+	card_sb.content_margin_top = 28
+	card_sb.content_margin_bottom = 28
+	card.add_theme_stylebox_override("panel", card_sb)
+	center.add_child(card)
+
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 18)
+	col.add_theme_constant_override("separation", 14)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	center.add_child(col)
+	card.add_child(col)
 
 	_endgame_label = Label.new()
 	_endgame_label.text = ""
 	_endgame_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_endgame_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_endgame_label.add_theme_font_size_override("font_size", 48)
+	_endgame_label.add_theme_font_size_override("font_size", 52)
+	# Drop shadow so the title pops against the card background.
+	_endgame_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
+	_endgame_label.add_theme_constant_override("shadow_offset_x", 2)
+	_endgame_label.add_theme_constant_override("shadow_offset_y", 2)
 	col.add_child(_endgame_label)
+
+	# Flavor subtitle — fiction line under the title. Reset on each state
+	# transition by _set_endgame_state so the right line shows for victory
+	# vs. defeat.
+	_endgame_flavor_lbl = Label.new()
+	_endgame_flavor_lbl.text = ""
+	_endgame_flavor_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_endgame_flavor_lbl.add_theme_font_size_override("font_size", 16)
+	_endgame_flavor_lbl.modulate = Color(0.78, 0.85, 0.95, 0.9)
+	_endgame_flavor_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_endgame_flavor_lbl.custom_minimum_size = Vector2(480, 0)
+	col.add_child(_endgame_flavor_lbl)
+
+	var sep := HSeparator.new()
+	sep.modulate = Color(1, 1, 1, 0.25)
+	col.add_child(sep)
 
 	# Stats panel — populated on victory/defeat with the frozen run_stats
 	# dict. Sits between the title and the action buttons so the player
 	# reads "VICTORY" → their run summary → Restart / Main Menu.
 	_endgame_stats_lbl = Label.new()
-	_endgame_stats_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_endgame_stats_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_endgame_stats_lbl.add_theme_font_size_override("font_size", 14)
 	_endgame_stats_lbl.modulate = Color(0.92, 0.92, 0.95, 0.95)
 	_endgame_stats_lbl.text = ""
 	col.add_child(_endgame_stats_lbl)
+
+	var sep2 := HSeparator.new()
+	sep2.modulate = Color(1, 1, 1, 0.25)
+	col.add_child(sep2)
 
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 12)
@@ -2378,12 +3121,18 @@ func on_wave_state_changed(new_state: int, wave_index: int, _duration: float) ->
 	_wave_index = wave_index
 	# Mirror WaveManager.State enum: 0=PEACE 1=WAVE 2=EVAC 3=VICTORY 4=DEFEAT.
 	if new_state == 3:
-		_endgame_label.text = "VICTORY\nSurvivors evacuated"
-		_endgame_label.modulate = Color(0.5, 1.0, 0.55)
+		_endgame_label.text = "VICTORY"
+		_endgame_label.modulate = Color(0.55, 1.0, 0.65)
+		if _endgame_flavor_lbl != null:
+			_endgame_flavor_lbl.text = "The shuttle clears the atmosphere.\nThe Farlands recede behind you — survivors aboard, signal fading."
+			_endgame_flavor_lbl.modulate = Color(0.78, 0.95, 0.85, 0.95)
 		_endgame_overlay.visible = true
 	elif new_state == 4:
-		_endgame_label.text = "DEFEAT\nAll survivors lost"
+		_endgame_label.text = "DEFEAT"
 		_endgame_label.modulate = Color(1.0, 0.45, 0.45)
+		if _endgame_flavor_lbl != null:
+			_endgame_flavor_lbl.text = "The signal goes silent.\nThe beach falls quiet — no one answers the comm."
+			_endgame_flavor_lbl.modulate = Color(0.95, 0.78, 0.78, 0.95)
 		_endgame_overlay.visible = true
 
 
@@ -2468,16 +3217,30 @@ func _populate_endgame_stats() -> void:
 	var t: float = float(s.get("run_time", 0.0))
 	var mm: int = int(t) / 60
 	var ss: int = int(t) % 60
+	# Tally survivors who actually made it to the shuttle vs. lost — gives
+	# the victory screen its emotional anchor ("you saved 3 of 4"). Also
+	# meaningful on defeat: "0 / 4" reads worse than just a kill counter.
+	var saved: int = 0
+	var total_crew: int = 0
+	if "all_units" in main_node:
+		for u in main_node.all_units:
+			if not is_instance_valid(u):
+				continue
+			var unit_node: Unit = u as Unit
+			total_crew += 1
+			if unit_node.evacuated:
+				saved += 1
 	var lines: Array = [
-		"Run time:           %d:%02d" % [mm, ss],
-		"Waves completed:    %d / 3" % int(s.get("waves_completed", 0)),
-		"Enemy kills:        %d" % int(s.get("kills", 0)),
-		"Trees harvested:    %d" % int(s.get("trees_harvested", 0)),
-		"Rocks / ores mined: %d" % int(s.get("rocks_mined", 0)),
-		"Items crafted:      %d" % int(s.get("items_crafted", 0)),
-		"Buildings built:    %d" % int(s.get("buildings_built", 0)),
-		"Survivors downed:   %d" % int(s.get("downed_count", 0)),
-		"Revives performed:  %d" % int(s.get("revived_count", 0)),
+		"Survivors evacuated:  %d / %d" % [saved, max(total_crew, 1)],
+		"Run time:             %d:%02d" % [mm, ss],
+		"Waves survived:       %d" % int(s.get("waves_completed", 0)),
+		"Enemy kills:          %d" % int(s.get("kills", 0)),
+		"Trees harvested:      %d" % int(s.get("trees_harvested", 0)),
+		"Rocks / ores mined:   %d" % int(s.get("rocks_mined", 0)),
+		"Items crafted:        %d" % int(s.get("items_crafted", 0)),
+		"Buildings built:      %d" % int(s.get("buildings_built", 0)),
+		"Times downed:         %d" % int(s.get("downed_count", 0)),
+		"Revives performed:    %d" % int(s.get("revived_count", 0)),
 	]
 	var decisions: Array = s.get("decisions", [])
 	if not decisions.is_empty():
@@ -2499,6 +3262,14 @@ func notify_loot_batch(world_pos: Vector2, drops: Dictionary) -> void:
 	var main: Node = get_tree().root.get_node_or_null("Main")
 	if main == null or drops.is_empty():
 		return
+	# Single pickup SFX per batch, played at the loot's world position.
+	# Every "items just landed in inventory" path (tree fall, rock mine,
+	# driftwood collect, crab kill, supply drop, demolish refund,
+	# fabricator output, gather completion) already routes through this
+	# function for the floating toast — playing the sound here means we
+	# don't have to scatter `play_2d` calls across six call sites and
+	# can't forget one when a new pickup path is added later.
+	AudioManager.play_2d(Sounds.ITEM_PICKUP, world_pos)
 	var idx: int = 0
 	for item_name: String in drops.keys():
 		var count: int = int(drops[item_name])
@@ -2579,7 +3350,32 @@ func _refresh_char_inv_panel() -> void:
 			break
 		(_char_inv_drop_slots[idx] as _InvDropSlot).set_item(item, _char_inv_unit.data.inventory[item])
 		idx += 1
+	# Equipment slots: show the icon for whatever is in each slot, or the
+	# placeholder if empty. _GearSlot.refresh handles both states.
+	for slot_key in _char_inv_equip_slots:
+		var gs: _GearSlot = _char_inv_equip_slots[slot_key] as _GearSlot
+		if gs != null:
+			gs.refresh(_char_inv_unit)
+	_refresh_char_inv_stats()
 	_refresh_auto_heal_button()
+
+
+# Render the unit's effective combat stats under the equipment slots so
+# the player can see at a glance how gear shifted their numbers. Reads
+# the live values on UnitData (which already include equipment bonuses,
+# since equip_gear / unequip_gear bake bonuses into the same fields).
+func _refresh_char_inv_stats() -> void:
+	if _char_inv_stats_lbl == null or _char_inv_unit == null:
+		return
+	var d: UnitData = _char_inv_unit.data
+	var lines: Array = [
+		"Damage:    [b]%d[/b]" % int(d.attack_damage),
+		"Range:     [b]%.1f[/b] tiles" % float(d.attack_range_tiles),
+		"Cooldown:  [b]%.2f[/b] s" % float(d.attack_cooldown),
+		"Max HP:    [b]%d[/b]" % int(d.max_health),
+		"Speed:     [b]%d[/b]" % int(d.speed),
+	]
+	_char_inv_stats_lbl.text = "\n".join(lines)
 
 
 func show_loot_panel(title: String, source_inv: Dictionary, source_pos: Vector2) -> void:
@@ -2590,19 +3386,30 @@ func show_loot_panel(title: String, source_inv: Dictionary, source_pos: Vector2)
 	# Visible first so layout flushes; size is otherwise zero on the first frame.
 	_loot_panel.visible = true
 	_loot_panel.reset_size()
-	# Loot panel's top-left corner sits exactly on the inventory panel's
-	# top-right corner — touching, not overlapping. Falls back to a screen-edge
-	# position if the inventory isn't open for some reason.
+	# Loot panel sits ABOVE the inventory panel, right-aligned so its right
+	# edge tracks the inventory's right edge. Bottom of the loot panel
+	# touches the top of the inventory (with a small gap) so they read as
+	# a stacked pair. Falls back to a top-right screen-edge position if
+	# the inventory isn't open. Final clamp keeps the panel fully inside
+	# the viewport regardless of inventory height.
+	const GAP: float = 6.0
 	var lp_size := _loot_panel.size
+	var vp := get_viewport().get_visible_rect().size
+	var target_pos: Vector2
 	if _char_inv_panel.visible:
 		var inv_rect := _char_inv_panel.get_global_rect()
-		_loot_panel.position = Vector2(
-			inv_rect.position.x + inv_rect.size.x,
-			inv_rect.position.y
+		target_pos = Vector2(
+			inv_rect.position.x + inv_rect.size.x - lp_size.x,
+			inv_rect.position.y - lp_size.y - GAP
 		)
 	else:
-		var vp := get_viewport().get_visible_rect().size
-		_loot_panel.position = Vector2(vp.x - lp_size.x - 8.0, 8.0)
+		target_pos = Vector2(vp.x - lp_size.x - 8.0, 8.0)
+	# Final clamp — guarantees the panel stays fully on-screen regardless
+	# of where the inventory is anchored (e.g. inventory is near the top
+	# of the screen, leaving no room above for the loot panel).
+	target_pos.x = clamp(target_pos.x, 8.0, max(8.0, vp.x - lp_size.x - 8.0))
+	target_pos.y = clamp(target_pos.y, 8.0, max(8.0, vp.y - lp_size.y - 8.0))
+	_loot_panel.position = target_pos
 
 
 func _refresh_loot_panel() -> void:
@@ -2699,6 +3506,20 @@ func _build_craft_panel() -> PanelContainer:
 	header.add_child(close_btn)
 	vbox.add_child(header)
 	vbox.add_child(HSeparator.new())
+
+	# Recipe search bar — case-insensitive substring match on recipe name.
+	# Lives just above the scrollable recipe list so the player can narrow
+	# the long list (especially once Gear recipes were added) without
+	# scrolling through every category.
+	_craft_search = LineEdit.new()
+	_craft_search.placeholder_text = "Search recipes…"
+	_craft_search.clear_button_enabled = true
+	_craft_search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_craft_search.text_changed.connect(func(t: String) -> void:
+		_craft_filter = t.strip_edges().to_lower()
+		_refresh_craft_panel()
+	)
+	vbox.add_child(_craft_search)
 
 	# Scrollable recipe list (each entry rebuilt on _refresh_craft_panel).
 	var scroll := ScrollContainer.new()
@@ -2812,6 +3633,35 @@ func _build_choice_panel() -> PanelContainer:
 func show_choice_event(event_name: String, description: String, options: Array) -> void:
 	if _choice_panel == null:
 		return
+	# Force-close every other open panel so the choice modal owns the
+	# screen. A choice event interrupts whatever the player was doing
+	# anyway — leaving the inventory / construct / craft tabs open just
+	# clutters the foreground and competes for clicks.
+	_close_bottom_panels()
+	if _char_inv_panel != null:
+		_char_inv_panel.visible = false
+	if _loot_panel != null:
+		_loot_panel.visible = false
+	if _heal_panel != null:
+		_heal_panel.visible = false
+	if _craft_panel != null:
+		_craft_panel.visible = false
+	if _unit_panel != null:
+		_unit_panel.visible = false
+	if _group_panel != null:
+		_group_panel.visible = false
+	if _tree_panel != null:
+		_tree_panel.visible = false
+	if _debug_panel != null:
+		_debug_panel.visible = false
+		if _debug_toggle_btn != null:
+			_debug_toggle_btn.text = "Debug ▾"
+	# _inspect_popup lives on Main, not GUI — reach for it defensively
+	# in case Main hasn't finished setup yet (shouldn't happen at runtime,
+	# but the early _ready paths have surprised us before).
+	var main_node: Node = grid.get_parent() if grid != null else null
+	if main_node != null and "_inspect_popup" in main_node and main_node._inspect_popup != null:
+		main_node._inspect_popup.visible = false
 	_choice_pending_event = event_name
 	_choice_title_lbl.text = event_name
 	_choice_desc_lbl.text = description
@@ -2850,17 +3700,34 @@ func _refresh_craft_panel() -> void:
 		c.queue_free()
 
 	# Recipes grouped by category. Each row: name + I/O summary + Queue button.
+	# When a search filter is active we collect matching recipes per
+	# category first and skip categories that end up empty so the player
+	# doesn't see a stranded "Gear" header with no rows under it. Match is
+	# case-insensitive substring on the recipe's display name.
+	var any_match: bool = false
 	for cat in _CRAFT_RECIPES_GUI.get_categories():
+		var matches: Array = []
+		for r: Dictionary in _CRAFT_RECIPES_GUI.by_category(cat):
+			if _craft_filter == "" or String(r.get("name", "")).to_lower().find(_craft_filter) != -1:
+				matches.append(r)
+		if matches.is_empty():
+			continue
+		any_match = true
 		var cat_lbl := Label.new()
 		cat_lbl.text = cat
 		cat_lbl.add_theme_font_size_override("font_size", 12)
 		cat_lbl.modulate = Color(0.85, 0.85, 0.95)
 		_craft_recipes_box.add_child(cat_lbl)
-		for r: Dictionary in _CRAFT_RECIPES_GUI.by_category(cat):
+		for r: Dictionary in matches:
 			_craft_recipes_box.add_child(_build_craft_recipe_row(r))
 		var sep := HSeparator.new()
 		sep.modulate = Color(1, 1, 1, 0.3)
 		_craft_recipes_box.add_child(sep)
+	if not any_match and _craft_filter != "":
+		var empty := Label.new()
+		empty.text = "No recipes match \"%s\"." % _craft_filter
+		empty.modulate = Color(0.7, 0.7, 0.7)
+		_craft_recipes_box.add_child(empty)
 
 	# Queue display.
 	if _craft_anchor == Vector2(-1, -1) or not grid.fabricators.has(_craft_anchor):
@@ -2890,8 +3757,17 @@ func _refresh_craft_panel() -> void:
 
 
 func _build_craft_recipe_row(recipe: Dictionary) -> HBoxContainer:
+	# Layout (inside the outer HBox):
+	#   [output icon 44x44]  ┌ Recipe Name              30s ┐
+	#                        │ Cost:    [ico]3/6  [ico]2/2 │
+	#                        │ Yields:  [ico]×1            │
+	#                        │ [Queue]                     │
+	# Each ingredient/output is a small "chip" (icon + count label) instead
+	# of a comma-joined text string, which reads much faster than parsing a
+	# sentence. Cost chips color their count green/red based on team pool.
 	var row := HBoxContainer.new()
-	row.custom_minimum_size = Vector2(0, 44)
+	row.add_theme_constant_override("separation", 10)
+
 	# Output icon — the visual hook that tells the player what they get.
 	var out_items: Dictionary = recipe.output
 	var primary_out: String = ""
@@ -2899,7 +3775,7 @@ func _build_craft_recipe_row(recipe: Dictionary) -> HBoxContainer:
 		primary_out = k
 		break
 	var icon := TextureRect.new()
-	icon.custom_minimum_size = Vector2(36, 36)
+	icon.custom_minimum_size = Vector2(44, 44)
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -2909,33 +3785,97 @@ func _build_craft_recipe_row(recipe: Dictionary) -> HBoxContainer:
 
 	var info_col := VBoxContainer.new()
 	info_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info_col.add_theme_constant_override("separation", 4)
+
+	# Header line: name on the left, craft time on the right.
+	var header := HBoxContainer.new()
 	var name_lbl := Label.new()
 	name_lbl.text = recipe.name
-	info_col.add_child(name_lbl)
-	# Inputs → Outputs summary, plus craft time.
-	var in_parts: Array = []
-	for k in (recipe.inputs as Dictionary).keys():
-		in_parts.append("%d× %s" % [int(recipe.inputs[k]), k])
-	var out_parts: Array = []
-	for k in out_items.keys():
-		out_parts.append("%d× %s" % [int(out_items[k]), k])
-	var io_lbl := Label.new()
-	io_lbl.text = "%s → %s   (%ds)" % [", ".join(in_parts), ", ".join(out_parts), int(recipe.get("time", 0.0))]
-	io_lbl.add_theme_font_size_override("font_size", 11)
-	io_lbl.modulate = Color(0.78, 0.78, 0.82)
-	info_col.add_child(io_lbl)
-	row.add_child(info_col)
+	name_lbl.add_theme_font_size_override("font_size", 13)
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(name_lbl)
+	var time_lbl := Label.new()
+	time_lbl.text = "%ds" % int(recipe.get("time", 0.0))
+	time_lbl.add_theme_font_size_override("font_size", 11)
+	time_lbl.modulate = Color(0.70, 0.78, 0.88, 0.85)
+	header.add_child(time_lbl)
+	info_col.add_child(header)
+
+	# Cost row: "Cost:" caption + one chip per ingredient. Chip count colors
+	# green when team pool ≥ need, red when short.
+	info_col.add_child(_build_recipe_chip_row("Cost", recipe.inputs as Dictionary, true))
+	# Yields row: same shape, but counts are neutral (recipe output).
+	info_col.add_child(_build_recipe_chip_row("Yields", out_items, false))
 
 	var queue_btn := Button.new()
 	queue_btn.text = "Queue"
 	queue_btn.custom_minimum_size = Vector2(72, 0)
-	# Disable when the team can't afford the recipe (not when in-progress —
-	# you can queue duplicates to chain crafts).
+	queue_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	queue_btn.disabled = not _team_has_inputs(recipe.inputs)
 	var rid: String = recipe.id
 	queue_btn.pressed.connect(func(): _on_craft_queue_pressed(rid))
-	row.add_child(queue_btn)
+	info_col.add_child(queue_btn)
+
+	row.add_child(info_col)
 	return row
+
+
+# Build one row of the recipe card: a small caption ("Cost" / "Yields")
+# followed by a chip per item. A chip is a 22x22 icon next to a count
+# label. When `color_by_pool` is true (cost row), the count text is green
+# when the team can cover it and red when short — mirroring the BBCode
+# format used elsewhere but with proper aligned icons.
+func _build_recipe_chip_row(caption: String, items: Dictionary, color_by_pool: bool) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var cap := Label.new()
+	cap.text = caption
+	cap.add_theme_font_size_override("font_size", 11)
+	cap.modulate = Color(0.62, 0.70, 0.82, 0.95)
+	cap.custom_minimum_size = Vector2(44, 0)
+	row.add_child(cap)
+	for item_name in items.keys():
+		var need: int = int(items[item_name])
+		row.add_child(_build_item_chip(String(item_name), need, color_by_pool))
+	return row
+
+
+# Single icon+count widget. `color_by_pool=true` reads the team pool and
+# tints the count green (covered) or red (short); false uses a neutral
+# off-white. Falls back to a plain text chip when no icon is registered
+# for the item (e.g. driftwood/fiber that never got an entry in
+# ITEM_ICONS).
+func _build_item_chip(item_name: String, count: int, color_by_pool: bool) -> Control:
+	var chip := HBoxContainer.new()
+	chip.add_theme_constant_override("separation", 4)
+	chip.tooltip_text = item_name
+	if ITEM_ICONS.has(item_name):
+		var ico := TextureRect.new()
+		ico.custom_minimum_size = Vector2(22, 22)
+		ico.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ico.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ico.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		ico.texture = load(ITEM_ICONS[item_name]) as Texture2D
+		chip.add_child(ico)
+	else:
+		# Inline name fallback so an iconless ingredient still reads.
+		var n := Label.new()
+		n.text = item_name
+		n.add_theme_font_size_override("font_size", 11)
+		n.modulate = Color(0.85, 0.85, 0.88)
+		chip.add_child(n)
+	var count_lbl := Label.new()
+	count_lbl.add_theme_font_size_override("font_size", 12)
+	count_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	if color_by_pool:
+		var have: int = _team_count(item_name)
+		count_lbl.text = "%d/%d" % [have, count]
+		count_lbl.modulate = Color(0.50, 0.86, 0.55) if have >= count else Color(1.0, 0.49, 0.49)
+	else:
+		count_lbl.text = "×%d" % count
+		count_lbl.modulate = Color(0.92, 0.92, 0.95)
+	chip.add_child(count_lbl)
+	return chip
 
 
 # Check team-pool inventory against the recipe's input dict. Mirrors
@@ -2946,17 +3886,64 @@ func _team_has_inputs(inputs: Dictionary) -> bool:
 		return false
 	for item_name in inputs.keys():
 		var needed: int = int(inputs[item_name])
-		var team_total: int = 0
-		for u in main_node.all_units:
-			if not is_instance_valid(u):
-				continue
-			var unit_node: Unit = u as Unit
-			if unit_node.is_dead() or unit_node.is_downed:
-				continue
-			team_total += int(unit_node.data.inventory.get(item_name, 0))
-		if team_total < needed:
+		if _team_count(item_name) < needed:
 			return false
 	return true
+
+
+# Public hook fired by Main.notify_inventory_changed when the team's pool
+# grows or shrinks. Re-renders any open panel that displays per-item
+# have/need counts so the readouts don't go stale while the player
+# watches the construct or craft tab. Both panels are cheap to rebuild:
+# Construct shows ~6 items at most; Craft shows the full recipe list but
+# is only open while a Fabricator is selected.
+func on_inventory_changed() -> void:
+	if _construct_panel != null and _construct_panel.visible and _construct_current_category != "":
+		_show_items(_construct_current_category)
+	if _craft_panel != null and _craft_panel.visible:
+		_refresh_craft_panel()
+	# Live-refresh the Global Inventory + Character Inventory panels too.
+	# These weren't being repainted when stuff landed in / left a unit's
+	# bag, so the lists could go stale (e.g. crafting at a Fabricator
+	# wouldn't tick the Inventory panel until you closed and reopened it).
+	if _global_inv_panel != null and _global_inv_panel.visible:
+		_refresh_global_inventory()
+	if _char_inv_panel != null and _char_inv_panel.visible:
+		_refresh_char_inv_panel()
+
+
+# Sum the team's pooled count of an item across every live (not-downed)
+# unit's inventory. Mirrors the pull-resources pool that crafting and
+# building actually draw from, so the "have / need" readouts in build /
+# craft tabs match what the queue will see when it tries to spend.
+func _team_count(item_name: String) -> int:
+	var main_node: Node = grid.get_parent()
+	if main_node == null:
+		return 0
+	var total: int = 0
+	for u in main_node.all_units:
+		if not is_instance_valid(u):
+			continue
+		var unit_node: Unit = u as Unit
+		if unit_node.is_dead() or unit_node.is_downed:
+			continue
+		total += int(unit_node.data.inventory.get(item_name, 0))
+	return total
+
+
+# Render a cost / input dict as a BBCode line where each entry shows
+# "<item> have/need" — green when satisfied, red when short. Used by the
+# construct catalog and the craft recipe rows so the player can see at a
+# glance whether the team can afford an action without flipping back to
+# the inventory tab.
+func _format_cost_bbcode(cost: Dictionary) -> String:
+	var parts: Array = []
+	for item_name in cost.keys():
+		var need: int = int(cost[item_name])
+		var have: int = _team_count(item_name)
+		var col: String = "#7fdc8a" if have >= need else "#ff7d7d"
+		parts.append("%s [color=%s]%d/%d[/color]" % [item_name, col, have, need])
+	return ", ".join(parts)
 
 
 func _on_craft_queue_pressed(recipe_id: String) -> void:
@@ -3408,11 +4395,181 @@ class _InvDropSlot extends PanelContainer:
 		return {"item": _item_name, "count": _count, "from_char_inv": true}
 
 	func _can_drop_data(_at: Vector2, data: Variant) -> bool:
-		return data is Dictionary and data.has("item") and data.has("source_inv")
+		if not (data is Dictionary):
+			return false
+		# Accept regular inventory transfers (source_inv set) AND drops
+		# from a gear slot (from_gear_slot set) — the latter triggers an
+		# unequip back into the open unit's inventory.
+		if data.has("from_gear_slot"):
+			return true
+		return data.has("item") and data.has("source_inv")
 
 	func _drop_data(_at: Vector2, data: Variant) -> void:
+		if _gui_ref == null:
+			return
+		# Drag-out from gear slot → unequip on the active char-inv unit.
+		# The unequip path puts the item back in inventory and refreshes
+		# the panel, which redraws this slot too.
+		if bool(data.get("from_gear_slot", false)):
+			var slot_key: String = String(data.get("slot", ""))
+			if _gui_ref._char_inv_unit != null and slot_key != "":
+				var unit: Unit = _gui_ref._char_inv_unit as Unit
+				unit.unequip_gear(slot_key)
+				_gui_ref._refresh_char_inv_panel()
+			return
+		_gui_ref.on_item_dropped_to_inv(data["item"], data["count"], data["source_inv"])
+
+
+# ── Equipment slot (weapon / head / body) ────────────────────────────────────
+#
+# Empty state: shows the slot's name as a faint label and a colored border
+# matching the slot family. Occupied state: shows the equipped item's icon
+# at full brightness, tooltip lists the stat bonuses, right-click unequips.
+# Drag a gear item from an inventory _InvDropSlot onto this slot to equip;
+# the slot itself is draggable too so the player can drop it back into
+# inventory (functionally equivalent to right-clicking but matches the
+# muscle memory of the rest of the inventory UI).
+class _GearSlot extends PanelContainer:
+	var _gui_ref         # GUI node reference
+	var _slot_key: String   # "weapon" / "head" / "body"
+	var _icon: TextureRect
+	var _placeholder: Label
+
+	func _init(gui_node, slot_key: String) -> void:
+		_gui_ref = gui_node
+		_slot_key = slot_key
+		custom_minimum_size = Vector2(64, 64)
+		mouse_filter = Control.MOUSE_FILTER_STOP
+		# Frame styling — faint accent border so empty slots still read as
+		# slots, not generic panels. Stylebox is applied locally so the
+		# project-wide theme doesn't override it.
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.10, 0.12, 0.16, 0.65)
+		sb.border_color = Color(0.55, 0.65, 0.78, 0.45)
+		sb.set_border_width_all(1)
+		sb.set_corner_radius_all(4)
+		add_theme_stylebox_override("panel", sb)
+
+		_icon = TextureRect.new()
+		_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_icon)
+
+		_placeholder = Label.new()
+		_placeholder.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_placeholder.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_placeholder.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_placeholder.modulate = Color(0.55, 0.62, 0.74, 0.85)
+		_placeholder.add_theme_font_size_override("font_size", 10)
+		_placeholder.text = _slot_key.capitalize()
+		_placeholder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_placeholder)
+
+	# Refresh display from the unit's current equipped dict. Called by
+	# _refresh_char_inv_panel.
+	func refresh(unit: Unit) -> void:
+		if unit == null:
+			_icon.texture = null
+			_placeholder.visible = true
+			tooltip_text = ""
+			return
+		var item: String = String(unit.data.equipped.get(_slot_key, ""))
+		if item == "":
+			_icon.texture = null
+			_placeholder.visible = true
+			tooltip_text = "%s slot — drag a matching gear item here." % _slot_key.capitalize()
+			return
+		_placeholder.visible = false
 		if _gui_ref != null:
-			_gui_ref.on_item_dropped_to_inv(data["item"], data["count"], data["source_inv"])
+			_icon.texture = _gui_ref._get_item_icon(item)
+		var def: Dictionary = GearDefs.get_def(item)
+		var summary: String = GearDefs.stat_summary(item)
+		tooltip_text = "%s\n%s\n\nRight-click to unequip." % [item, summary if summary != "" else String(def.get("description", ""))]
+
+	# Accept drops from the character's inventory grid (_InvDropSlot
+	# tags its drag data with `from_char_inv: true`). Reject anything
+	# that isn't gear, doesn't fit this slot, or that the unit's role
+	# can't equip — visual feedback comes from the engine drawing a red
+	# "no" cursor when _can_drop_data returns false.
+	func _can_drop_data(_at: Vector2, data: Variant) -> bool:
+		if not (data is Dictionary):
+			return false
+		if not data.has("item"):
+			return false
+		var item: String = String(data.get("item", ""))
+		if not GearDefs.is_gear(item):
+			return false
+		if GearDefs.slot_of(item) != _slot_key:
+			return false
+		if _gui_ref == null or _gui_ref._char_inv_unit == null:
+			return false
+		var unit: Unit = _gui_ref._char_inv_unit as Unit
+		if not GearDefs.role_can_equip(item, String(unit.data.role)):
+			return false
+		# Only accept items already in the character's own inventory —
+		# gear has to be picked up by the unit before it can be worn.
+		# (If you later want quick-equip from team pool, relax this.)
+		return bool(data.get("from_char_inv", false))
+
+	func _drop_data(_at: Vector2, data: Variant) -> void:
+		if _gui_ref == null or _gui_ref._char_inv_unit == null:
+			return
+		# Slot-to-slot drag: drop from another gear slot doesn't make sense
+		# for our 3-slot layout (each item only fits one slot anyway), so
+		# treat it as unequipping the source. Equip flow below handles the
+		# normal inventory→slot path.
+		if bool(data.get("from_gear_slot", false)):
+			var src_slot: String = String(data.get("slot", ""))
+			if src_slot != _slot_key and src_slot != "":
+				var u_src: Unit = _gui_ref._char_inv_unit as Unit
+				u_src.unequip_gear(src_slot)
+				_gui_ref._refresh_char_inv_panel()
+			return
+		var item: String = String(data.get("item", ""))
+		var unit: Unit = _gui_ref._char_inv_unit as Unit
+		unit.equip_gear(item)
+		_gui_ref._refresh_char_inv_panel()
+
+	# Drag the equipped piece out of the slot. The engine asks the drop
+	# target whether to accept (see _InvDropSlot._can_drop_data) — if it
+	# does, we unequip in _drop_data. Returning null when the slot is
+	# empty stops the drag dead so an empty slot isn't grabbable.
+	func _get_drag_data(_at: Vector2) -> Variant:
+		if _gui_ref == null or _gui_ref._char_inv_unit == null:
+			return null
+		var unit: Unit = _gui_ref._char_inv_unit as Unit
+		var item: String = String(unit.data.equipped.get(_slot_key, ""))
+		if item == "":
+			return null
+		# Drag preview: a TextureRect with the gear icon, sized like a
+		# slot. Mirrors the inventory drag preview so the player gets
+		# consistent visual feedback regardless of source.
+		var preview := TextureRect.new()
+		preview.texture = _gui_ref._get_item_icon(item)
+		preview.custom_minimum_size = Vector2(48, 48)
+		preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		preview.modulate = Color(1, 1, 1, 0.85)
+		set_drag_preview(preview)
+		return {
+			"item": item,
+			"count": 1,
+			"from_gear_slot": true,
+			"slot": _slot_key,
+		}
+
+	# Right-click anywhere inside the slot unequips the current piece.
+	# Left-click is a no-op so we don't conflict with the engine's drag
+	# preview / drop pipeline.
+	func _gui_input(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+			if _gui_ref != null and _gui_ref._char_inv_unit != null:
+				var unit: Unit = _gui_ref._char_inv_unit as Unit
+				if unit.unequip_gear(_slot_key):
+					_gui_ref._refresh_char_inv_panel()
+			accept_event()
 
 
 # ── Unit-to-unit inventory slot (drag between units in units panel) ────────────
@@ -3686,10 +4843,16 @@ class _MinimapControl extends Control:
 			var mx: float = (wp.x / world_w) * mm.x
 			var my: float = (wp.y / world_h) * mm.y
 			if unit_node.is_downed:
-				# Pulsing red so a fallen teammate is unmissable.
-				var pulse: float = 0.6 + sin(Time.get_ticks_msec() * 0.005) * 0.4
-				draw_circle(Vector2(mx, my), 9.0, Color(1.0, 0.2, 0.2, 0.20 * pulse))
-				draw_circle(Vector2(mx, my), 4.5, Color(1.0, 0.30, 0.30, 1.0))
+				# Pulsing red halo + bright dot + white pip so the marker
+				# cuts through dark terrain at any zoom. Previous version
+				# had a near-transparent halo (0.20 max alpha) that
+				# disappeared against shadow tiles — this is loud on
+				# purpose, since a downed teammate is the highest-priority
+				# UI alert.
+				var pulse: float = 0.55 + sin(Time.get_ticks_msec() * 0.006) * 0.45
+				draw_circle(Vector2(mx, my), 12.0, Color(1.0, 0.15, 0.15, 0.45 * pulse))
+				draw_circle(Vector2(mx, my), 6.0, Color(1.0, 0.25, 0.25, 1.0))
+				draw_circle(Vector2(mx, my), 2.0, Color(1.0, 1.0, 1.0, 0.95))
 			else:
 				# Steady green for alive teammates.
 				var alive_col: Color = Color(0.30, 0.95, 0.45)
@@ -3928,9 +5091,12 @@ class _MapPanelControl extends Control:
 			var ux: float = origin.x + (wp.x / world_w) * mm.x
 			var uy: float = origin.y + (wp.y / world_h) * mm.y
 			if unit_node.is_downed:
-				var pulse: float = 0.6 + sin(Time.get_ticks_msec() * 0.005) * 0.4
-				draw_circle(Vector2(ux, uy), 18.0, Color(1.0, 0.2, 0.2, 0.20 * pulse))
-				draw_circle(Vector2(ux, uy), 9.0, Color(1.0, 0.30, 0.30, 1.0))
+				# Same loud pulse as the small minimap, scaled up for the
+				# expanded map panel.
+				var pulse: float = 0.55 + sin(Time.get_ticks_msec() * 0.006) * 0.45
+				draw_circle(Vector2(ux, uy), 22.0, Color(1.0, 0.15, 0.15, 0.45 * pulse))
+				draw_circle(Vector2(ux, uy), 11.0, Color(1.0, 0.25, 0.25, 1.0))
+				draw_circle(Vector2(ux, uy), 4.0, Color(1.0, 1.0, 1.0, 0.95))
 			else:
 				var alive_col: Color = Color(0.30, 0.95, 0.45)
 				draw_circle(Vector2(ux, uy), 18.0, Color(alive_col.r, alive_col.g, alive_col.b, 0.18))

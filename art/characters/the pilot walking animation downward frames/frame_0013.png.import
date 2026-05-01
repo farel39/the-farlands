@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cd6yothbcaolw"
-path="res://.godot/imported/frame_0013.png-454c3023a3f564936a47e43aa53c7a29.ctex"
+path.s3tc="res://.godot/imported/frame_0013.png-454c3023a3f564936a47e43aa53c7a29.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the pilot walking animation downward frames/frame_0013.png"
-dest_files=["res://.godot/imported/frame_0013.png-454c3023a3f564936a47e43aa53c7a29.ctex"]
+dest_files=["res://.godot/imported/frame_0013.png-454c3023a3f564936a47e43aa53c7a29.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

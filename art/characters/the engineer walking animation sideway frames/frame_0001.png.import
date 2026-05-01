@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://167mj4vwm6g6"
-path="res://.godot/imported/frame_0001.png-37e85b3cabf1fc7653fda17ceb63e8ca.ctex"
+path.s3tc="res://.godot/imported/frame_0001.png-37e85b3cabf1fc7653fda17ceb63e8ca.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the engineer walking animation sideway frames/frame_0001.png"
-dest_files=["res://.godot/imported/frame_0001.png-37e85b3cabf1fc7653fda17ceb63e8ca.ctex"]
+dest_files=["res://.godot/imported/frame_0001.png-37e85b3cabf1fc7653fda17ceb63e8ca.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

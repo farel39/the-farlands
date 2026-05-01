@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://vc6rfxtuehcy"
-path="res://.godot/imported/frame_0033.png-f66082c51a8fc8198b1418e55e24feb8.ctex"
+path.s3tc="res://.godot/imported/frame_0033.png-f66082c51a8fc8198b1418e55e24feb8.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/characters/the medic attacking animation sideway frames/frame_0033.png"
-dest_files=["res://.godot/imported/frame_0033.png-f66082c51a8fc8198b1418e55e24feb8.ctex"]
+dest_files=["res://.godot/imported/frame_0033.png-f66082c51a8fc8198b1418e55e24feb8.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

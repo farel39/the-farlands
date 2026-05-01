@@ -47,6 +47,28 @@ var _dest_world: Vector2 = Vector2(-1, -1)  # exact world destination
 const GATHER_DURATION := 1.5  # seconds to stand at source before picking up
 var _gather_timer: float = -1.0
 
+# Looping AudioStreamPlayer2D for the active work action (chop / mine).
+# Lazily created on first use and parented to the unit so it tracks the
+# unit's position. Reused across actions by swapping the stream — only
+# one work loop ever plays at a time per unit, since the unit can only
+# do one thing at a time.
+var _work_audio: AudioStreamPlayer2D = null
+var _work_audio_path: String = ""
+
+# Looping pistol audio for combat. Behaves like _work_audio: parented to
+# the unit so it pans with their position, started when an attack tick
+# lands (so the loop only fires when actually shooting, not while walking
+# to engage), and stopped automatically the frame after _combat_target
+# clears. Keeping it as a single sustained loop reads better than
+# overlapping per-hit one-shots when the source sample is a 1s+ burst.
+var _combat_audio: AudioStreamPlayer2D = null
+# Tracks whether the unit had a live combat target last frame so we can
+# detect the transition to "no target" and revert the post-attack
+# aim-hold sprite back to an idle stance. Without this, ranged units
+# freeze in their final attack frame when the target dies / escapes,
+# because _tick_attack_anim only runs while _is_attacking is true.
+var _was_in_combat: bool = false
+
 var _build_timer: float = -1.0
 var _build_duration: float = 1.0
 
@@ -614,6 +636,13 @@ func trigger_attack() -> void:
 		_attack_frame_idx = clamp(attack_chain_start_side if chain else 0, 0, _attack_frames_side.size() - 1)
 		_attack_frame_timer = 0.0
 		_apply_sprite_attack_side(_attack_frames_side[_attack_frame_idx], _walk_flip_h)
+	# Engineer melee fires at the START of the swing animation so the axe
+	# "thunk" lines up with the visible swing. Ranged units (Medic, Pilot)
+	# fire their pistol on hit-register instead — see _apply_combat_hit —
+	# because the muzzle flash / shot beat falls on the hit frame, not
+	# the holster-raise windup.
+	if _is_attacking and String(data.role) == "Engineer":
+		AudioManager.play_2d(Sounds.ENGINEER_MELEE, global_position)
 
 
 func _apply_combat_hit() -> void:
@@ -621,6 +650,12 @@ func _apply_combat_hit() -> void:
 		return
 	if _combat_target.has_method("take_damage"):
 		_combat_target.take_damage(data.attack_damage, self)
+	# Pistol report — per-hit one-shot at the shooter's position so each
+	# fired shot pops with the muzzle-flash frame. -6 dB to keep it from
+	# burying the rest of the mix. Engineer's melee SFX is fired at swing
+	# start instead (see trigger_attack) and is excluded here.
+	if String(data.role) != "Engineer":
+		AudioManager.play_2d(Sounds.PISTOL_SHOT, global_position, -6.0)
 
 
 func is_dead() -> bool:
@@ -680,7 +715,11 @@ func _enter_downed() -> void:
 	_gather_timer = -1.0
 	_repair_timer = -1.0
 	_demolish_timer = -1.0
+	_harvest_timer = -1.0
+	_mine_timer = -1.0
+	_stop_work_loop()
 	_combat_target = null
+	_stop_combat_loop()
 	_force_attack = false
 	_path_is_combat = false
 	_is_walking_side = false
@@ -692,8 +731,13 @@ func _enter_downed() -> void:
 	auto_heal_enabled = false
 	if _flashlight:
 		_flashlight.enabled = false
+	# Keep the body glow active so the player can spot the downed
+	# teammate on a dim battlefield — but dimmed so they read as
+	# "wounded life sign" rather than "fully alert." A teammate's
+	# revive call swaps the energy back via _exit_downed_state.
 	if _glow:
-		_glow.enabled = false
+		_glow.enabled = true
+		_glow.energy = _GLOW_BASE_ENERGY * 0.45
 	if _tex_downed:
 		_apply_downed_sprite(_tex_downed)
 	queue_redraw()
@@ -716,6 +760,9 @@ func _exit_downed_state(hp_amount: float) -> void:
 		_flashlight.enabled = true
 	if _glow:
 		_glow.enabled = true
+		# Restore full glow on revive — _enter_downed dimmed it to 45%
+		# as the "wounded life sign" cue.
+		_glow.energy = _GLOW_BASE_ENERGY
 	var sprite := get_node_or_null("Sprite2D") as Sprite2D
 	if sprite:
 		sprite.modulate = Color(1, 1, 1, 1)
@@ -744,6 +791,7 @@ func queue_relay_channel(anchor: Vector2) -> void:
 	_repair_timer = -1.0
 	demolish_target = Vector2(-1, -1)
 	_demolish_timer = -1.0
+	_stop_work_loop()
 	mine_target = Vector2(-1, -1)
 	_mine_timer = -1.0
 	revive_target = null
@@ -910,6 +958,20 @@ func _stop_for_combat() -> void:
 func _tick_combat(delta: float) -> void:
 	if _combat_cooldown > 0.0:
 		_combat_cooldown -= delta
+	# Combat-state bookkeeping: any path that nulls _combat_target (HOLD
+	# stance, target killed, target out of aggro range, sight broken,
+	# manual move override) gets caught here on the next combat tick and
+	# (a) stops the pistol loop, (b) resets the post-attack aim-hold
+	# sprite back to a normal idle stance. Without (b), ranged units
+	# would freeze in their final attack frame after the target dies.
+	if _combat_target == null or not is_instance_valid(_combat_target):
+		_stop_combat_loop()
+		if _was_in_combat:
+			_was_in_combat = false
+			if not _is_attacking:
+				_revert_to_idle_sprite()
+	else:
+		_was_in_combat = true
 	# Combat is gated by stance, not drafted state. Drafted only affects whether
 	# the unit accepts player commands (move / attack-target). Undrafted units
 	# can still defend themselves or auto-engage based on stance.
@@ -1454,6 +1516,14 @@ func _tick_gather(delta: float) -> void:
 		grid.take_from_inventory(gather_target, actual)
 		for item in actual:
 			data.inventory[item] = data.inventory.get(item, 0) + actual[item]
+		# Fire the unified pickup feedback (toast + SFX) so collecting
+		# driftwood / crate items feels the same as harvest / mine drops.
+		# Position above the source cell, not the worker, so the player's
+		# eye stays on what they just emptied.
+		if gui != null and gui.has_method("notify_loot_batch"):
+			var src_world: Vector2 = grid.gridToWorld(gather_target) + Vector2(grid.cell_size * 0.5, grid.cell_size * 0.3)
+			gui.notify_loot_batch(src_world, actual)
+		_notify_team_inventory_changed()
 	gather_target = Vector2(-1, -1)
 	gather_items = {}
 	_start_next_task()
@@ -1471,6 +1541,11 @@ func _tick_build(delta: float) -> void:
 	var bt := build_target
 	build_target = Vector2(-1, -1)
 	grid.complete_blueprint(bt)
+	# Construction loop ends when the build tick wraps up — same pattern
+	# as harvest / mine. Cancellation paths (move-override, downed,
+	# blueprint pulled out from under the worker) already call
+	# _stop_work_loop, so we don't need to scatter more stop calls here.
+	_stop_work_loop()
 	_start_next_task()
 
 
@@ -1567,6 +1642,7 @@ func move(delta: float) -> void:
 			_harvest_timer = max(0.01, HARVEST_DURATION - hsaved)
 			grid.show_harvest_bar(hroot)
 			grid.update_harvest_bar(hroot, hsaved / HARVEST_DURATION)
+			_start_work_loop(Sounds.TREE_CHOP_LOOP)
 			return
 		if mine_target != Vector2(-1, -1):
 			# Arrived adjacent to the rock — same shape as harvest, with saved
@@ -1579,6 +1655,9 @@ func move(delta: float) -> void:
 			_mine_timer = max(0.01, MINE_DURATION - msaved)
 			grid.show_mine_bar(mine_target)
 			grid.update_mine_bar(mine_target, msaved / MINE_DURATION)
+			# Source sample is louder than the chop loop; -8 dB brings it
+			# into balance with tree harvesting and other ambient SFX.
+			_start_work_loop(Sounds.ROCK_MINE_LOOP, -8.0)
 			return
 		if build_target != Vector2(-1, -1):
 			# Bail if the blueprint was canceled / completed by someone else
@@ -1617,6 +1696,7 @@ func move(delta: float) -> void:
 			_build_duration = max(2.0, float(cost_total) * 0.8)
 			_build_timer = _build_duration
 			grid.start_blueprint_build(build_target)
+			_start_work_loop(Sounds.CONSTRUCTION_LOOP)
 			return
 		if repair_target != Vector2(-1, -1):
 			# Arrived next to the damaged wall — start the per-second repair
@@ -1684,6 +1764,7 @@ func draft_move_to(world_pos: Vector2, from_combat: bool = false) -> void:
 		_harvest_timer = -1.0
 		mine_target = Vector2(-1, -1)
 		_mine_timer = -1.0
+		_stop_work_loop()
 		revive_target = null
 		if relay_target != Vector2(-1, -1):
 			clear_relay_target()
@@ -1945,6 +2026,7 @@ func _tick_harvest(delta: float) -> void:
 		grid.hide_harvest_bar(hroot)
 		harvest_target = Vector2(-1, -1)
 		_harvest_timer = -1.0
+		_stop_work_loop()
 		_start_next_task()
 		return
 	_harvest_timer -= delta
@@ -1957,6 +2039,11 @@ func _tick_harvest(delta: float) -> void:
 	var drops: Dictionary = grid.harvest_tree(harvest_target)
 	harvest_target = Vector2(-1, -1)
 	_harvest_timer = -1.0
+	_stop_work_loop()
+	# Tree fall one-shot at the trunk's world position so the sound pans
+	# from the tree, not the chopper. Centre of the 3x3 footprint.
+	var fall_world: Vector2 = grid.gridToWorld(root) + Vector2(grid.cell_size * 1.5, grid.cell_size * 1.5)
+	AudioManager.play_2d(Sounds.TREE_FALL, fall_world)
 	if not drops.is_empty():
 		for item_name: String in drops.keys():
 			data.inventory[item_name] = int(data.inventory.get(item_name, 0)) + int(drops[item_name])
@@ -1979,6 +2066,7 @@ func _tick_mine(delta: float) -> void:
 		grid.hide_mine_bar(mine_target)
 		mine_target = Vector2(-1, -1)
 		_mine_timer = -1.0
+		_stop_work_loop()
 		_start_next_task()
 		return
 	_mine_timer -= delta
@@ -1991,6 +2079,7 @@ func _tick_mine(delta: float) -> void:
 	var drops: Dictionary = grid.mine_at(rock_cell)
 	mine_target = Vector2(-1, -1)
 	_mine_timer = -1.0
+	_stop_work_loop()
 	if not drops.is_empty():
 		for item_name: String in drops.keys():
 			data.inventory[item_name] = int(data.inventory.get(item_name, 0)) + int(drops[item_name])
@@ -2055,6 +2144,165 @@ func _notify_team_inventory_changed() -> void:
 	var main: Node = get_tree().root.get_node_or_null("Main")
 	if main != null and main.has_method("notify_inventory_changed"):
 		main.notify_inventory_changed()
+
+
+# Equip an item from this unit's inventory into its matching slot. Returns
+# true on success. Fails (silently) when:
+#   • the item isn't a registered gear def
+#   • the unit's role isn't in the def's `roles` whitelist
+#   • the item isn't in the unit's inventory
+# If a different item already occupies the slot, it gets unequipped back
+# into the inventory first so the player never loses gear.
+#
+# Stat bonuses from the def's `stats` dict are added directly to the live
+# fields on UnitData (attack_damage, max_health, speed, …). max_health
+# bonuses also bump current health by the same amount so the player
+# perceives an instant heal — feels right for armour swaps and avoids
+# the "equipped armor but my HP is still 80/120" surprise.
+func equip_gear(item_name: String) -> bool:
+	if not GearDefs.is_gear(item_name):
+		return false
+	var def: Dictionary = GearDefs.get_def(item_name)
+	if not GearDefs.role_can_equip(item_name, String(data.role)):
+		return false
+	if int(data.inventory.get(item_name, 0)) <= 0:
+		return false
+	var slot: String = String(def.get("slot", ""))
+	if slot == "":
+		return false
+	# Vacate slot first if occupied — push the existing piece back into
+	# inventory rather than destroying it.
+	var current: String = String(data.equipped.get(slot, ""))
+	if current != "":
+		unequip_gear(slot)
+	# Decrement inventory count; remove the entry entirely when it hits
+	# zero so iterating the inventory doesn't show stale "0" rows.
+	data.inventory[item_name] = int(data.inventory[item_name]) - 1
+	if int(data.inventory[item_name]) <= 0:
+		data.inventory.erase(item_name)
+	data.equipped[slot] = item_name
+	_apply_gear_stats(def.get("stats", {}), 1)
+	_notify_team_inventory_changed()
+	return true
+
+
+# Remove whatever is in `slot` and return it to the inventory. No-op if
+# the slot is already empty. Reverts every stat bonus the gear applied.
+# Current health is clamped if a max_health drop pulled it past max.
+func unequip_gear(slot: String) -> bool:
+	var item_name: String = String(data.equipped.get(slot, ""))
+	if item_name == "":
+		return false
+	var def: Dictionary = GearDefs.get_def(item_name)
+	data.equipped[slot] = ""
+	data.inventory[item_name] = int(data.inventory.get(item_name, 0)) + 1
+	_apply_gear_stats(def.get("stats", {}), -1)
+	if data.health > data.max_health:
+		data.health = data.max_health
+	_notify_team_inventory_changed()
+	return true
+
+
+# Walk the gear def's stats dict and add `sign * value` to the matching
+# UnitData fields. Sign = +1 on equip, -1 on unequip. max_health bonuses
+# also adjust current health so equipping armour heals proportionally and
+# unequipping doesn't leave the unit "over-healed".
+func _apply_gear_stats(stats: Dictionary, sign_i: int) -> void:
+	for key in stats.keys():
+		var v: float = float(stats[key]) * float(sign_i)
+		match key:
+			"attack_damage":
+				data.attack_damage = int(data.attack_damage + v)
+			"attack_range_tiles":
+				data.attack_range_tiles = data.attack_range_tiles + v
+			"attack_cooldown":
+				data.attack_cooldown = max(0.1, data.attack_cooldown + v)
+			"max_health":
+				data.max_health = data.max_health + v
+				# Equip → heal by bonus; unequip → just shrink the cap.
+				if sign_i > 0:
+					data.health = min(data.max_health, data.health + v)
+			"speed":
+				data.speed = max(20.0, data.speed + v)
+
+
+# Start (or switch to) a looping work-action SFX parented to this unit.
+# Idempotent — calling with the same path while already playing is a no-op,
+# so it's safe to call from per-frame tick code if needed (currently only
+# called on tick start / cancel paths). Audio attenuates by world distance
+# from the listener via AudioStreamPlayer2D's built-in falloff.
+func _start_work_loop(stream_path: String, volume_db: float = 0.0) -> void:
+	if _work_audio_path == stream_path and _work_audio != null and _work_audio.playing:
+		return
+	if _work_audio != null:
+		_work_audio.stop()
+		_work_audio.queue_free()
+		_work_audio = null
+	_work_audio = AudioManager.make_looping_2d(stream_path, self, volume_db)
+	_work_audio_path = stream_path
+	if _work_audio != null:
+		_work_audio.play()
+
+
+func _stop_work_loop() -> void:
+	if _work_audio != null:
+		_work_audio.stop()
+		_work_audio.queue_free()
+		_work_audio = null
+	_work_audio_path = ""
+
+
+# Combat pistol loop. Idempotent — re-calling while already playing is a
+# no-op so it's safe to invoke from _apply_combat_hit on every shot
+# register. The loop sustains until _stop_combat_loop fires (driven by
+# _tick_combat noticing _combat_target went null).
+func _start_combat_loop() -> void:
+	if _combat_audio != null and _combat_audio.playing:
+		return
+	if _combat_audio == null:
+		_combat_audio = AudioManager.make_looping_2d(Sounds.PISTOL_SHOT, self)
+	if _combat_audio != null:
+		_combat_audio.play()
+
+
+func _stop_combat_loop() -> void:
+	if _combat_audio == null:
+		return
+	if _combat_audio.playing:
+		_combat_audio.stop()
+
+
+# Reset the displayed sprite back to an idle pose for the current attack
+# direction. _tick_attack_anim's end-of-anim handler holds the last attack
+# frame as an "aim hold" pose between chained shots; once combat ends
+# nothing runs to clear it, so we apply this from the combat-state
+# transition in _tick_combat. Order of preference per direction matches
+# the existing post-attack idle code paths so the reset feels consistent.
+func _revert_to_idle_sprite() -> void:
+	# Engineer holds the last attack-down frame deliberately (axe held in
+	# a ready stance reads better than blinking back to a holstered tex).
+	# Stay out of the way for that role and direction.
+	if String(data.role) == "Engineer" and _attack_dir == "down":
+		return
+	_attack_down_hold = false
+	match _attack_dir:
+		"down":
+			if not _walk_frames_down.is_empty():
+				_apply_sprite_walk_down(_walk_frames_down[_walk_idle_frame_down])
+			elif _tex_down:
+				_apply_sprite(_tex_down, false)
+		"up":
+			if not _walk_frames_up.is_empty():
+				_apply_sprite(_walk_frames_up[0], false)
+			elif _tex_up:
+				_apply_sprite(_tex_up, false)
+		_:
+			if idle_side_tex:
+				_apply_sprite_attack_side(idle_side_tex, _walk_flip_h)
+			elif not _walk_frames_side.is_empty() and _walk_frames_side.size() > _walk_idle_frame_side:
+				_apply_sprite(_walk_frames_side[_walk_idle_frame_side], _walk_flip_h)
+			elif _tex_side:
+				_apply_sprite(_tex_side, _walk_flip_h)
 
 
 # Sum of `item_name` across every live unit's inventory. Used by build
@@ -2149,6 +2397,7 @@ func set_drafted(value: bool) -> void:
 	if _build_timer >= 0.0:
 		_build_timer = -1.0
 		grid.cancel_blueprint_build(build_target)
+		_stop_work_loop()
 	if not drafted:
 		_hide_active_progress_bars()
 		harvest_target = Vector2(-1, -1)

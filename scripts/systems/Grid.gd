@@ -50,6 +50,17 @@ var fabricators: Dictionary = {}
 # fires.
 var comm_relays: Dictionary = {}
 const RELAY_CHANNEL_DURATION: float = 90.0  # seconds to call evac
+
+# Light harassment spawn cadence during channeling — one creature every
+# RELAY_HARASS_INTERVAL seconds while a channel is actively progressing.
+# At 13s on a 90s channel this comes out to ~7 spawns total (alien crab /
+# tide crawler / shore stalker), which is enough to make the channel feel
+# like a defense moment without overwhelming a moderately walled relay.
+const RELAY_HARASS_INTERVAL: float = 13.0
+# Initial delay before the first harassment spawn so the player has a
+# breather to set up the channeler. Tuned shorter than the interval so
+# the first ping feels like an immediate response.
+const RELAY_HARASS_INITIAL_DELAY: float = 8.0
 # Preload to avoid relying on `class_name CraftRecipes` registration timing
 # (same workaround as CreatureDefs in WaveManager).
 const _CRAFT_RECIPES := preload("res://scripts/data/CraftRecipes.gd")
@@ -514,7 +525,10 @@ func spawn_supply_pod(cell: Vector2) -> bool:
 	# Build collision body so right-click inspect physics query catches it,
 	# matching the SupplyCrate convention. Tag with the SupplyCrate occupier
 	# so existing right-click → loot panel handling works without changes.
-	var img: Image = pod_tex.get_image()
+	# WorldSpawner._alpha_image decompresses VRAM-compressed textures so
+	# BitMap.create_from_image_alpha can read them. Without this, the
+	# Tier-1 reimport breaks every collision-from-sprite path.
+	var img: Image = WorldSpawner._alpha_image(pod_tex)
 	var bm := BitMap.new()
 	bm.create_from_image_alpha(img)
 	var polys := bm.opaque_to_polygons(Rect2(Vector2.ZERO, img.get_size()), 2.0)
@@ -964,6 +978,37 @@ func complete_blueprint(grid_pos: Vector2) -> void:
 		main_b.record_building_built()
 
 
+# Restore a fully-built building from save data — bypass the player's
+# blueprint-mode flow entirely. Sets up the internal _bp_def state that
+# _place_blueprint_at expects, places + completes the blueprint, then
+# overwrites HP if the saved value was less than max (a damaged wall
+# survives the save/load round-trip with its remaining HP intact).
+# Returns true on success, false if the def is unknown.
+func restore_building(grid_pos: Vector2, def_key: String, hp_value: int = -1) -> bool:
+	if not BuildingDefs.DEFS.has(def_key):
+		return false
+	var def: Dictionary = BuildingDefs.DEFS[def_key]
+	# Stash + restore _bp_def so we don't poison an in-flight player
+	# blueprint placement (defensive — restore_building should only run
+	# during scene _ready, but the stash is cheap and pre-empts subtle
+	# bugs if it ever gets called mid-run).
+	var prev_def: Variant = _bp_def
+	var prev_orientation: int = _bp_orientation
+	_bp_def = def
+	_bp_orientation = 0
+	_place_blueprint_at(grid_pos)
+	_bp_def = prev_def
+	_bp_orientation = prev_orientation
+	# _place_blueprint_at can fail silently (cell occupied etc.) — guard
+	# the completion call.
+	if not blueprints.has(grid_pos):
+		return false
+	complete_blueprint(grid_pos)
+	if hp_value > 0 and buildings.has(grid_pos):
+		buildings[grid_pos].hp = min(hp_value, int(buildings[grid_pos].max_hp))
+	return true
+
+
 # Returns [{ world_pos, radius }] for every active light-emitting building
 # (campfires, floodlights). Used by Unit._can_see and Main._update_fog so
 # player-built light sources reveal enemies the same way unit flashlights
@@ -1347,6 +1392,20 @@ func _tick_comm_relays(delta: float) -> void:
 		relay.progress += delta
 		var t: float = clamp(float(relay.progress) / RELAY_CHANNEL_DURATION, 0.0, 1.0)
 		_update_relay_bar(anchor, t)
+		# Light harassment ticker — spawns a single ambient-tier creature
+		# (alien crab / tide crawler / shore stalker) at a random map edge
+		# every RELAY_HARASS_INTERVAL seconds while the channel runs.
+		# Initialised lazily so older saved relays without the field still
+		# work; ticks down only while the channel is actively progressing
+		# (paused branches above already `continue` past this code).
+		var harass_t: float = float(relay.get("harass_t", RELAY_HARASS_INITIAL_DELAY))
+		harass_t -= delta
+		if harass_t <= 0.0:
+			var main_h: Node = get_parent()
+			if main_h != null and main_h.wave_manager != null and main_h.wave_manager.has_method("spawn_harassment_creature"):
+				main_h.wave_manager.spawn_harassment_creature()
+			harass_t = RELAY_HARASS_INTERVAL
+		relay.harass_t = harass_t
 		if relay.progress >= RELAY_CHANNEL_DURATION:
 			relay.completed = true
 			_hide_relay_bar(anchor)
@@ -1575,10 +1634,24 @@ func _tick_fabricators(delta: float) -> void:
 			# Recipe done — deposit output to team, drop the recipe from the
 			# queue, reset progress for the next entry.
 			_deposit_to_team(anchor, recipe.output)
+			# Craft-complete chime, played at the fabricator's world centre
+			# so the player can localize which fabricator just produced
+			# something when several are running. _deposit_to_team also
+			# fires the regular ITEM_PICKUP one-shot (via notify_loot_batch),
+			# so the chime layers on top of the pickup sound for a clear
+			# "thing finished" beat.
+			var fab_world: Vector2 = (anchor as Vector2) * float(cell_size) + Vector2(cell_size, cell_size * 0.5)
+			AudioManager.play_2d(Sounds.CRAFT_COMPLETE, fab_world)
 			# Stat hook for the run summary.
 			var main_n: Node = get_parent()
 			if main_n != null and main_n.has_method("record_item_crafted"):
 				main_n.record_item_crafted()
+			# Quest-tracker hook: mark Comm Relay Module as crafted so the
+			# objective panel only ticks step 2 from a real craft (not from
+			# Free Mats / drops). Stays true even after the module is
+			# consumed for the antenna build.
+			if main_n != null and String(recipe.get("id", "")) == "make_comm_relay_module":
+				main_n.relay_module_crafted = true
 			queue.pop_front()
 			fab.progress = 0.0
 			if queue.is_empty():

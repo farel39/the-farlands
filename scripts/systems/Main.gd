@@ -8,6 +8,13 @@ extends Node2D
 
 var all_units: Array = []
 var selected_units: Array = []
+# When true, _set_selection auto-drafts every newly selected unit so the
+# player doesn't have to click "Draft" or "Draft All" first. Toggled from
+# the GUI checkbox above the minimap. Previously drafted units are NOT
+# undrafted on selection change — auto-draft is additive, since RTS
+# muscle memory expects drafted state to persist independently of the
+# current selection rect.
+var auto_draft: bool = false
 # Per-run stat snapshot, frozen on Victory/Defeat for the summary panel.
 # Every gameplay subsystem with an interesting outcome (kills, harvests,
 # crafts, downs, revives, choice events) bumps these counters via the
@@ -21,6 +28,12 @@ var selected_units: Array = []
 # Looting already-dead salvage (crates / ship debris) and killing enemies
 # don't add threat — they're "free" actions.
 var threat_level: float = 0.0
+# True once a unit has actually crafted a Comm Relay Module at a Fabricator
+# this run. The quest panel uses this (not "is there a module in
+# inventory?") so debug shortcuts like Free Mats can't auto-progress the
+# objective list. Stays true even after the module is consumed for the
+# antenna build, so step 2 of the objective stays checked.
+var relay_module_crafted: bool = false
 const THREAT_HARVEST: float = 1.0       # tree chop
 const THREAT_MINE_ROCK: float = 1.5     # plain rock
 const THREAT_MINE_ORE: float = 2.5      # rare metal — more disruptive
@@ -116,6 +129,11 @@ func _ready() -> void:
 	_setup_ambient_light()
 	_setup_wave_manager()
 	_setup_harvest_highlight()
+	# Apply any save-data queued by the menu (Pause → Load, Main Menu →
+	# Continue, etc.). Runs AFTER all systems are wired so apply_run_data
+	# can talk to the wave_manager / grid / units freely. No-op when
+	# queued_load_slot is the sentinel -1 (fresh run).
+	_apply_pending_load()
 
 
 # World-space overlay that pulses outlines on harvestable / mineable objects
@@ -923,6 +941,26 @@ func _set_selection(units: Array) -> void:
 	selected_units = units
 	for u in selected_units:
 		u.selected = true
+	# Auto-draft hook — when the player has the toggle on (checkbox
+	# above the minimap), the drafted set follows the selection set
+	# Dota-style: anyone selected becomes drafted, anyone NOT selected
+	# becomes undrafted. set_drafted is called only when state actually
+	# changes so we don't restart pathing on units that were already in
+	# the right state.
+	if auto_draft:
+		var sel_lookup: Dictionary = {}
+		for s in selected_units:
+			sel_lookup[s] = true
+		for u in all_units:
+			if not is_instance_valid(u):
+				continue
+			if not u.has_method("set_drafted"):
+				continue
+			var should_be_drafted: bool = sel_lookup.has(u)
+			if should_be_drafted and not u.drafted:
+				u.set_drafted(true)
+			elif not should_be_drafted and u.drafted:
+				u.set_drafted(false)
 
 
 func _formation(center: Vector2, count: int) -> Array:
@@ -1151,12 +1189,14 @@ func _cancel_tasks_at_cell(click_cell: Vector2, mouse_world: Vector2) -> void:
 			grid.hide_harvest_bar(unit_node.harvest_target)
 			unit_node.harvest_target = Vector2(-1, -1)
 			unit_node._harvest_timer = -1.0
+			unit_node._stop_work_loop()
 			unit_node.path.clear()
 		if anchors.has(unit_node.mine_target):
 			grid.rock_mine_progress.erase(unit_node.mine_target)
 			grid.hide_mine_bar(unit_node.mine_target)
 			unit_node.mine_target = Vector2(-1, -1)
 			unit_node._mine_timer = -1.0
+			unit_node._stop_work_loop()
 			unit_node.path.clear()
 		if anchors.has(unit_node.repair_target):
 			unit_node.repair_target = Vector2(-1, -1)
@@ -1167,14 +1207,17 @@ func _cancel_tasks_at_cell(click_cell: Vector2, mouse_world: Vector2) -> void:
 			unit_node._demolish_timer = -1.0
 			unit_node.path.clear()
 		if anchors.has(unit_node.build_target):
-			# Mid-build cancel: refund spent_cost so the player isn't stealth-
-			# taxed for changing their mind. Use the existing cancel-with-refund
-			# helper so the blueprint sprite + marker are also torn down.
-			var bp_target: Vector2 = unit_node.build_target
+			# Cancel mode releases the worker but leaves the blueprint
+			# standing — Cancel is a "stop working on this" order, not a
+			# "tear it down" order. To tear down + refund, use right-
+			# click on the blueprint (or the Demolish order, which is
+			# the destructive variant). Already-spent cost stays banked
+			# in the blueprint's spent_cost dict, so the next build
+			# attempt skips re-deducting materials.
 			unit_node.build_target = Vector2(-1, -1)
 			unit_node._build_timer = -1.0
+			unit_node._stop_work_loop()
 			unit_node.path.clear()
-			_cancel_blueprint_with_refund(bp_target)
 		if unit_node.revive_target != null and is_instance_valid(unit_node.revive_target):
 			if anchors.has(unit_node.revive_target.get_grid_pos()):
 				unit_node.revive_target = null
@@ -1196,6 +1239,236 @@ func _can_build_now(bp_pos: Vector2) -> bool:
 # enough to call freely — _assign_tasks short-circuits when nothing changed.
 func notify_inventory_changed() -> void:
 	_assign_tasks()
+	# Refresh open UI panels that display per-item have/need counts (Construct
+	# catalog, Fabricator craft list) so the readouts stay live as material
+	# pools shift in the background.
+	if gui != null and gui.has_method("on_inventory_changed"):
+		gui.on_inventory_changed()
+
+
+# Floating world-space message at `world_pos`. Reuses the LootToast
+# component (no icon, custom color) so right-click feedback messages
+# anchor to the clicked object instead of the top-of-screen banner.
+# Used for regrowing-tree warnings and similar one-off prompts.
+const _LOOT_TOAST_SCRIPT: Script = preload("res://scripts/ui/LootToast.gd")
+func _spawn_world_toast(world_pos: Vector2, text: String, color: Color = Color(1.0, 0.95, 0.55)) -> void:
+	var t := Node2D.new()
+	t.set_script(_LOOT_TOAST_SCRIPT)
+	add_child(t)
+	t.position = world_pos
+	t.setup(null, text, color)
+
+
+# ── Save / Load ──────────────────────────────────────────────────────────────
+#
+# Snapshot the current run into a Dictionary that JSON.stringify can flatten.
+# Pause Menu → Save calls this and forwards the result to
+# SaveManager.write_run_data. The matching apply_run_data restores from the
+# same shape.
+#
+# Scope (kept tight on purpose): unit state, run-level counters, completed
+# buildings, fabricator queues, comm-relay channel progress. Procedural
+# world (trees, rocks, ambient creatures) and live-wave state are NOT
+# saved — they regenerate fresh on load. Wave state always resumes in
+# PEACE so we don't have to serialise mid-wave spawn queues.
+func serialize_run() -> Dictionary:
+	var d: Dictionary = {}
+	d["main"] = {
+		"threat_level": float(threat_level),
+		"relay_module_crafted": bool(relay_module_crafted),
+		"day_time": float(day_time),
+		"run_stats": run_stats.duplicate(true),
+	}
+	d["wave"] = {
+		"wave_num": int(wave_manager.wave_num) if wave_manager != null and "wave_num" in wave_manager else 0,
+	}
+	# Units — save by name so apply_run_data can match against the
+	# fixed Dax/Mira/Raya roster regardless of array order.
+	var units_arr: Array = []
+	for u in all_units:
+		if not is_instance_valid(u):
+			continue
+		var unit: Unit = u as Unit
+		units_arr.append({
+			"name": String(unit.data.name),
+			"pos_x": unit.position.x,
+			"pos_y": unit.position.y,
+			"health": float(unit.data.health),
+			"max_health": float(unit.data.max_health),
+			"attack_damage": int(unit.data.attack_damage),
+			"attack_range_tiles": float(unit.data.attack_range_tiles),
+			"attack_cooldown": float(unit.data.attack_cooldown),
+			"speed": float(unit.data.speed),
+			"drafted": bool(unit.drafted),
+			"is_downed": bool(unit.is_downed),
+			"evacuated": bool(unit.evacuated),
+			"auto_heal_enabled": bool(unit.auto_heal_enabled),
+			"inventory": unit.data.inventory.duplicate(true),
+			"equipped": unit.data.equipped.duplicate(true),
+			"work_priorities": unit.data.work_priorities.duplicate(true),
+		})
+	d["units"] = units_arr
+	# Buildings, fabricators, comm relays — keyed by anchor cell coords.
+	# Skipping in-flight blueprints in this MVP.
+	var bld_arr: Array = []
+	for anchor in grid.buildings.keys():
+		var b: Dictionary = grid.buildings[anchor]
+		var key: String = _building_def_key(b.def)
+		if key == "":
+			continue
+		var apos: Vector2 = anchor
+		bld_arr.append({
+			"x": int(apos.x), "y": int(apos.y),
+			"def_key": key,
+			"hp": int(b.hp),
+		})
+	d["buildings"] = bld_arr
+	var fab_arr: Array = []
+	for anchor in grid.fabricators.keys():
+		# Only persist fabricators whose anchor still maps to a real
+		# building — skipping any orphaned entries.
+		if not grid.buildings.has(anchor):
+			continue
+		var fab: Dictionary = grid.fabricators[anchor]
+		var apos: Vector2 = anchor
+		fab_arr.append({
+			"x": int(apos.x), "y": int(apos.y),
+			"queue": (fab.get("queue", []) as Array).duplicate(true),
+			"progress": float(fab.get("progress", 0.0)),
+		})
+	d["fabricators"] = fab_arr
+	var relay_arr: Array = []
+	for anchor in grid.comm_relays.keys():
+		if not grid.buildings.has(anchor):
+			continue
+		var relay: Dictionary = grid.comm_relays[anchor]
+		var apos: Vector2 = anchor
+		relay_arr.append({
+			"x": int(apos.x), "y": int(apos.y),
+			"progress": float(relay.get("progress", 0.0)),
+			"completed": bool(relay.get("completed", false)),
+		})
+	d["comm_relays"] = relay_arr
+	return d
+
+
+# Reverse-lookup the BuildingDefs key for a def Dictionary (matches by
+# identity since the def reference is the same object). Returns empty
+# string for unknown defs so callers can skip safely.
+func _building_def_key(def: Dictionary) -> String:
+	for k in BuildingDefs.DEFS:
+		if BuildingDefs.DEFS[k] == def:
+			return k
+	return ""
+
+
+# Inverse of serialize_run — overwrites the freshly-spawned scene state
+# with whatever was on disk. Order matters:
+#   1. Run counters (threat, day_time, run_stats, relay_flag) so any
+#      tick that fires later this frame sees the right values.
+#   2. Units — find by name and overwrite. The chars roster in
+#      _spawn_units is fixed (Dax/Mira/Raya), so name matching is safe.
+#   3. Buildings + fabricators + relays. Buildings first so the
+#      fabricator/relay state can attach to existing anchors.
+func apply_run_data(data: Dictionary) -> void:
+	if data.is_empty():
+		return
+	var version: int = int(data.get("version", 0))
+	if version != SaveManager.SAVE_FORMAT_VERSION:
+		push_warning("Save format mismatch (got %d, want %d) — skipping load." % [version, SaveManager.SAVE_FORMAT_VERSION])
+		return
+	# 1) Run-level state.
+	var main_data: Dictionary = data.get("main", {})
+	threat_level = float(main_data.get("threat_level", 0.0))
+	relay_module_crafted = bool(main_data.get("relay_module_crafted", false))
+	day_time = float(main_data.get("day_time", 0.5))
+	var saved_stats: Dictionary = main_data.get("run_stats", {})
+	for k in saved_stats.keys():
+		run_stats[k] = saved_stats[k]
+	# Wave number (state always resumes as PEACE in this MVP).
+	if wave_manager != null and "wave_num" in wave_manager:
+		wave_manager.wave_num = int(data.get("wave", {}).get("wave_num", 0))
+	# 2) Units — match by name, restore each field. data.role and
+	# textures are already correct from _spawn_units; we only overwrite
+	# stats / state / inventory.
+	var units_data: Array = data.get("units", [])
+	var by_name: Dictionary = {}
+	for u in all_units:
+		if is_instance_valid(u):
+			by_name[String((u as Unit).data.name)] = u
+	for ud_v: Variant in units_data:
+		var ud: Dictionary = ud_v as Dictionary
+		var unit: Unit = by_name.get(String(ud.get("name", "")), null) as Unit
+		if unit == null:
+			continue
+		unit.position = Vector2(float(ud.get("pos_x", 0.0)), float(ud.get("pos_y", 0.0)))
+		unit.data.health = float(ud.get("health", unit.data.health))
+		unit.data.max_health = float(ud.get("max_health", unit.data.max_health))
+		unit.data.attack_damage = int(ud.get("attack_damage", unit.data.attack_damage))
+		unit.data.attack_range_tiles = float(ud.get("attack_range_tiles", unit.data.attack_range_tiles))
+		unit.data.attack_cooldown = float(ud.get("attack_cooldown", unit.data.attack_cooldown))
+		unit.data.speed = float(ud.get("speed", unit.data.speed))
+		unit.drafted = bool(ud.get("drafted", false))
+		unit.evacuated = bool(ud.get("evacuated", false))
+		unit.auto_heal_enabled = bool(ud.get("auto_heal_enabled", false))
+		unit.data.inventory = (ud.get("inventory", {}) as Dictionary).duplicate(true)
+		unit.data.equipped = (ud.get("equipped", {}) as Dictionary).duplicate(true)
+		var saved_priorities: Dictionary = ud.get("work_priorities", {}) as Dictionary
+		for pk in saved_priorities.keys():
+			unit.data.work_priorities[pk] = saved_priorities[pk]
+		# Apply downed state through the proper channel so sprites and
+		# the flashlight/glow get reconfigured. Calling _enter_downed
+		# directly mirrors what take_damage does on HP→0.
+		if bool(ud.get("is_downed", false)):
+			if unit.has_method("_enter_downed"):
+				unit._enter_downed()
+		# Evacuated units should hide their visual + drop their colliders
+		# the way evacuate() handles it.
+		if unit.evacuated and unit.has_method("evacuate"):
+			unit.evacuate()
+	# 3) Buildings — restore each via the Grid helper.
+	for b_v: Variant in data.get("buildings", []):
+		var b: Dictionary = b_v as Dictionary
+		var pos: Vector2 = Vector2(int(b.get("x", 0)), int(b.get("y", 0)))
+		grid.restore_building(pos, String(b.get("def_key", "")), int(b.get("hp", -1)))
+	# 4) Fabricator queues + progress.
+	for f_v: Variant in data.get("fabricators", []):
+		var f: Dictionary = f_v as Dictionary
+		var pos: Vector2 = Vector2(int(f.get("x", 0)), int(f.get("y", 0)))
+		if grid.fabricators.has(pos):
+			grid.fabricators[pos].queue = (f.get("queue", []) as Array).duplicate(true)
+			grid.fabricators[pos].progress = float(f.get("progress", 0.0))
+	# 5) Comm-relay channel progress.
+	for r_v: Variant in data.get("comm_relays", []):
+		var r: Dictionary = r_v as Dictionary
+		var pos: Vector2 = Vector2(int(r.get("x", 0)), int(r.get("y", 0)))
+		if grid.comm_relays.has(pos):
+			grid.comm_relays[pos].progress = float(r.get("progress", 0.0))
+			grid.comm_relays[pos].completed = bool(r.get("completed", false))
+	# Re-apply run_stats AFTER everything else. Both restore_building
+	# (calls record_building_built) and _enter_downed (calls record_downed)
+	# bump counters during load — overwriting at the end keeps the saved
+	# values authoritative.
+	for k in saved_stats.keys():
+		run_stats[k] = saved_stats[k]
+	# Refresh the HUD now that inventories / equipped slots changed.
+	notify_inventory_changed()
+	if gui != null and gui.has_method("show_wave_banner"):
+		gui.show_wave_banner("Save loaded — survivors restored", 4.0)
+
+
+# Pull the save dict that the menu queued (if any) and apply it. Always
+# resets queued_load_slot to -1 afterwards so a future "New Game" doesn't
+# inadvertently re-trigger a load.
+func _apply_pending_load() -> void:
+	var slot: int = SaveManager.queued_load_slot
+	SaveManager.queued_load_slot = -1
+	if slot < 0:
+		return
+	var data: Dictionary = SaveManager.read_run_data(slot)
+	if data.is_empty():
+		return
+	apply_run_data(data)
 
 
 # Pull a multi-item dict from the team's combined inventory. Returns true on
@@ -1477,8 +1750,15 @@ func _process(_delta: float) -> void:
 	#day_time = fmod(day_time + delta / DAY_DURATION, 1.0)
 	# Remap to cycle only between "almost night" (0.58) and "deep night" (0.85)
 	var sky := _sky_color_at(0.74 + day_time * 0.08)
-	if not _bright_mode:
-		canvas_modulate.color = sky
+	# Player-facing global brightness multiplier (Settings → Brightness).
+	# 1.0 = no change, <1.0 dims the world, >1.0 brightens it. Applied to
+	# both the day/night sky tint and the debug bright-mode override so the
+	# slider works regardless of which path is driving canvas_modulate.
+	var bright_mul: float = SaveManager.get_global_brightness()
+	if _bright_mode:
+		canvas_modulate.color = Color(bright_mul, bright_mul, bright_mul)
+	else:
+		canvas_modulate.color = Color(sky.r * bright_mul, sky.g * bright_mul, sky.b * bright_mul, sky.a)
 	# Lights fade in as the sky darkens (v is HSV brightness, 0=dark, 1=bright)
 	var night_factor := 1.0 - sky.v
 	grid.set_tree_light_energy(night_factor * 0.8)
@@ -1683,18 +1963,26 @@ func _handle_right_click() -> void:
 		if grid.fabricators.has(built_anchor):
 			gui.show_craft_panel(built_anchor)
 			return
-		# Right-click on a built Comm Relay Antenna → dispatch the closest
-		# live, non-channeling teammate to start the channeling sequence.
-		# Once they arrive and stay adjacent for RELAY_CHANNEL_DURATION,
+		# Right-click on a built Comm Relay Antenna → show a confirmation
+		# popup ("Channel" button) the same way harvest / mine work, so a
+		# stray right-click doesn't accidentally pull a defender off the
+		# front line. Clicking the button dispatches a teammate to channel
+		# the relay — drafted units take priority; otherwise pick the
+		# closest live, non-channeling unit on the team. Once they arrive
+		# and stay adjacent for RELAY_CHANNEL_DURATION,
 		# WaveManager.trigger_evac_from_relay() fires.
 		if grid.comm_relays.has(built_anchor):
 			var relay_state: Dictionary = grid.comm_relays[built_anchor]
 			if relay_state.get("completed", false):
 				return  # already used; the EVAC is on its way
+			var anchor_world: Vector2 = grid.gridToWorld(built_anchor) + Vector2(grid.cell_size, grid.cell_size)
+			# Prefer the closest drafted unit if any are drafted, else the
+			# closest live teammate. Either way we filter out dead / downed /
+			# already-channeling units.
+			var pool: Array = drafted if not drafted.is_empty() else all_units
 			var channeler: Unit = null
 			var best_d: float = INF
-			var anchor_world: Vector2 = grid.gridToWorld(built_anchor) + Vector2(grid.cell_size, grid.cell_size)
-			for u in all_units:
+			for u in pool:
 				if not is_instance_valid(u):
 					continue
 				var unit_node: Unit = u as Unit
@@ -1706,16 +1994,46 @@ func _handle_right_click() -> void:
 				if d < best_d:
 					best_d = d
 					channeler = unit_node
-			if channeler != null:
-				channeler.queue_relay_channel(built_anchor)
+			if channeler == null:
+				return
+			var u_ref: Unit = channeler
+			var anchor_ref: Vector2 = built_anchor
+			_inspect_pending = func():
+				u_ref.queue_relay_channel(anchor_ref)
 				gui.show_wave_banner("Calling for evac — defend the antenna!", 4.0)
+			_inspect_btn.text = "Channel"
+			_loot_btn.visible = false
+			_inspect_popup.custom_minimum_size = Vector2(110, 36)
+			_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
+			_inspect_popup.visible = true
 			return
+
+	# Right-click on a construction blueprint → cancel it and refund the
+	# committed materials to the closest live unit. Tiny popup confirms
+	# the cancel (matches the harvest/mine pattern) so a stray click
+	# during tactical movement doesn't wipe a half-built structure.
+	# blueprint_at_cell returns (-1,-1) when the cell isn't a blueprint.
+	var bp_anchor: Vector2 = grid.blueprint_at_cell(click_cell)
+	if bp_anchor != Vector2(-1, -1):
+		var anchor_to_cancel: Vector2 = bp_anchor
+		_inspect_pending = func():
+			_cancel_blueprint_with_refund(anchor_to_cancel)
+		_inspect_btn.text = "Cancel"
+		_loot_btn.visible = false
+		_inspect_popup.custom_minimum_size = Vector2(110, 36)
+		_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
+		_inspect_popup.visible = true
+		return
 
 	# Right-click on a regrowing tree → tell the player it's not chop-ready.
 	# The countdown is intentionally hidden so the player has to read the
-	# sapling's visual size rather than watching a clock.
+	# sapling's visual size rather than watching a clock. Toast spawns at
+	# the tree itself (in green for "growing") rather than the top-of-
+	# screen banner so the message is grounded to the object the player
+	# clicked.
 	if not grid.regrowing_tree_at(click_cell).is_empty():
-		gui.show_wave_banner("Tree is still regrowing", 3.0)
+		var sapling_world: Vector2 = grid.gridToWorld(click_cell) + Vector2(grid.cell_size * 0.5, -grid.cell_size * 0.3)
+		_spawn_world_toast(sapling_world, "Tree is still regrowing", Color(0.55, 1.0, 0.55))
 		return
 
 	# Right-click on a tree → harvest. Drafted units get a confirmation
@@ -1828,6 +2146,7 @@ func _cancel_blueprint_with_refund(anchor: Vector2) -> void:
 		if u.build_target == anchor:
 			u.build_target = Vector2(-1, -1)
 			u._build_timer = -1.0
+			u._stop_work_loop()
 	var refund: Dictionary = grid.cancel_blueprint(anchor)
 	if refund.is_empty():
 		return
@@ -1951,55 +2270,44 @@ func _setup_inspect_popup() -> void:
 	_setup_debug_button()
 
 
+var _collision_overlay: Node2D = null
+var _nav_overlay: Node2D = null
+
 func _setup_debug_button() -> void:
-	var overlay := _CollisionOverlay.new(grid)
-	overlay.z_index = 100
-	grid.add_child(overlay)
+	# Overlay nodes still get created here (they need to be children of the
+	# grid so they render in the right layer). The toggle BUTTONS, however,
+	# now live inside the GUI's Debug dropdown — keeping the top-right
+	# corner clean. Public toggle methods below are what the dropdown calls.
+	_collision_overlay = _CollisionOverlay.new(grid)
+	_collision_overlay.z_index = 100
+	_collision_overlay.visible = false
+	grid.add_child(_collision_overlay)
 
-	var btn := Button.new()
-	btn.text = "Show Collision"
-	btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	btn.offset_left = -160
-	btn.offset_right = -8
-	btn.offset_top = 8
-	btn.offset_bottom = 40
-	btn.pressed.connect(func():
-		overlay.visible = not overlay.visible
-		btn.text = "Hide Collision" if overlay.visible else "Show Collision"
-	)
-	overlay.visible = false
-	$CanvasLayer.add_child(btn)
+	_nav_overlay = _NavOverlay.new(grid)
+	_nav_overlay.z_index = 99
+	_nav_overlay.visible = false
+	grid.add_child(_nav_overlay)
 
-	var nav_overlay := _NavOverlay.new(grid)
-	nav_overlay.z_index = 99
-	grid.add_child(nav_overlay)
 
-	var nav_btn := Button.new()
-	nav_btn.text = "Show Navigable"
-	nav_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	nav_btn.offset_left = -160
-	nav_btn.offset_right = -8
-	nav_btn.offset_top = 48
-	nav_btn.offset_bottom = 80
-	nav_btn.pressed.connect(func():
-		nav_overlay.visible = not nav_overlay.visible
-		nav_btn.text = "Hide Navigable" if nav_overlay.visible else "Show Navigable"
-	)
-	nav_overlay.visible = false
-	$CanvasLayer.add_child(nav_btn)
+# Called by GUI's Debug dropdown — returns the new visibility state so the
+# button can update its own label (Show ↔ Hide).
+func toggle_collision_overlay() -> bool:
+	if _collision_overlay == null:
+		return false
+	_collision_overlay.visible = not _collision_overlay.visible
+	return _collision_overlay.visible
 
-	var creatures_btn := Button.new()
-	creatures_btn.text = "Show Creatures"
-	creatures_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	creatures_btn.offset_left = -160
-	creatures_btn.offset_right = -8
-	creatures_btn.offset_top = 88
-	creatures_btn.offset_bottom = 120
-	creatures_btn.pressed.connect(func():
-		show_creatures = not show_creatures
-		creatures_btn.text = "Hide Creatures" if show_creatures else "Show Creatures"
-	)
-	$CanvasLayer.add_child(creatures_btn)
+
+func toggle_nav_overlay() -> bool:
+	if _nav_overlay == null:
+		return false
+	_nav_overlay.visible = not _nav_overlay.visible
+	return _nav_overlay.visible
+
+
+func toggle_show_creatures() -> bool:
+	show_creatures = not show_creatures
+	return show_creatures
 
 
 class _CollisionOverlay extends Node2D:

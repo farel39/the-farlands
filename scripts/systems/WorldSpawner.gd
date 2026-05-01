@@ -1,6 +1,23 @@
 class_name WorldSpawner
 
 
+# Pull a CPU-side Image out of a Texture2D for pixel-walking
+# (BitMap collision generation, sprite-alpha polygons, etc.). When the
+# texture's import setting is VRAM Compressed (BC1/BC3 etc.), the
+# Image we get back is also compressed — and BitMap.create_from_image_alpha
+# can't read those, it errors with "Cannot convert to (or from)
+# compressed formats." Decompressing in place gives us a normal RGBA8
+# image that BitMap is happy with. No-op when the source is already
+# uncompressed (Lossless / Lossy import).
+static func _alpha_image(tex: Texture2D) -> Image:
+	var img: Image = tex.get_image()
+	if img == null:
+		return null
+	if img.is_compressed():
+		img.decompress()
+	return img
+
+
 # A neighbour counts as "solid" for dirt fading if it's a dirt tile OR if it
 # has an occupier (rock, tree, etc.) — so the fade never bleeds toward objects.
 static func _dirt_solid(g: Grid, c: Vector2) -> bool:
@@ -54,7 +71,7 @@ static func spawn_one_tree(g: Grid, root: Vector2, texture: Texture2D) -> Sprite
 	sp.add_child(sprite)
 	g.tree_sprites[root] = sprite
 
-	var tree_img: Image = texture.get_image()
+	var tree_img: Image = _alpha_image(texture)
 	var tree_bm := BitMap.new()
 	tree_bm.create_from_image_alpha(tree_img)
 	var tree_polys := tree_bm.opaque_to_polygons(Rect2(Vector2.ZERO, tree_img.get_size()), 2.0)
@@ -72,7 +89,7 @@ static func spawn_one_tree(g: Grid, root: Vector2, texture: Texture2D) -> Sprite
 			var scaled := PackedVector2Array()
 			for pt: Vector2 in poly:
 				scaled.append((pt - tree_origin) * tree_s)
-			cp.polygon = scaled
+			cp.polygon = Geometry2D.convex_hull(scaled)
 			tree_body.add_child(cp)
 		sp.add_child(tree_body)
 
@@ -239,7 +256,7 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 		sp.add_child(sprite)
 		g.tree_sprites[pos] = sprite
 
-		var tree_img: Image = (tree_texture as Texture2D).get_image()
+		var tree_img: Image = _alpha_image(tree_texture as Texture2D)
 		var tree_bm := BitMap.new()
 		tree_bm.create_from_image_alpha(tree_img)
 		var tree_polys := tree_bm.opaque_to_polygons(Rect2(Vector2.ZERO, tree_img.get_size()), 2.0)
@@ -252,7 +269,7 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 				var scaled := PackedVector2Array()
 				for pt: Vector2 in poly:
 					scaled.append((pt - tree_origin) * tree_s)
-				cp.polygon = scaled
+				cp.polygon = Geometry2D.convex_hull(scaled)
 				tree_body.add_child(cp)
 			sp.add_child(tree_body)
 
@@ -282,7 +299,13 @@ static func spawn_trees(g: Grid, spawn_visuals: bool = true) -> void:
 			lily.texture = lily_tex
 			lily.position = g.gridToWorld(lc) + Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
 			lily.scale = Vector2(0.25, 0.25)
-			lily.z_index = int((lc as Vector2).y) + 1
+			# Ground-level decoration: z_index = cell.y - 1 so a unit
+			# standing on the same cell (z_index = cell.y) renders ABOVE
+			# the lily, while units further north (smaller cell.y, smaller
+			# z_index) still get correctly occluded by lilies in front of
+			# them. Previous +1 made the lily render on top of any unit
+			# stepping on it.
+			lily.z_index = int((lc as Vector2).y) - 1
 			sp.add_child(lily)
 			g.grid[lc].occupier = "LilyPad"
 			lily_placed += 1
@@ -421,7 +444,7 @@ static func spawn_crash_site(g: Grid) -> void:
 			hull_sprite.z_index = int(hp.y) + HULL_TILES
 			g.add_child(hull_sprite)
 
-			var hull_img: Image = hull_tex.get_image()
+			var hull_img: Image = _alpha_image(hull_tex)
 			var hull_bm := BitMap.new()
 			hull_bm.create_from_image_alpha(hull_img)
 			var hull_polys := hull_bm.opaque_to_polygons(Rect2(Vector2.ZERO, hull_img.get_size()), 2.0)
@@ -487,7 +510,7 @@ static func spawn_crash_site(g: Grid) -> void:
 			crate_sprite.z_index = int(cp.y) + 1
 			g.add_child(crate_sprite)
 
-			var crate_image: Image = crate_tex.get_image()
+			var crate_image: Image = _alpha_image(crate_tex)
 			var crate_bm := BitMap.new()
 			crate_bm.create_from_image_alpha(crate_image)
 			var crate_polys := crate_bm.opaque_to_polygons(Rect2(Vector2.ZERO, crate_image.get_size()), 2.0)
@@ -500,7 +523,7 @@ static func spawn_crash_site(g: Grid) -> void:
 					var scaled := PackedVector2Array()
 					for pt: Vector2 in poly:
 						scaled.append((pt - crate_origin) * crate_scale)
-					cp2.polygon = scaled
+					cp2.polygon = Geometry2D.convex_hull(scaled)
 					crate_body.add_child(cp2)
 				crate_body.set_meta("occupier", "SupplyCrate")
 				crate_body.set_meta("grid_pos", cp)
@@ -572,7 +595,7 @@ static func spawn_driftwood(g: Grid) -> void:
 		g.add_child(sprite)
 
 		var dw_body_ref: StaticBody2D = null
-		var dw_img: Image = tex.get_image()
+		var dw_img: Image = _alpha_image(tex)
 		var dw_bm := BitMap.new()
 		dw_bm.create_from_image_alpha(dw_img)
 		var dw_polys := dw_bm.opaque_to_polygons(Rect2(Vector2.ZERO, dw_img.get_size()), 2.0)
@@ -589,7 +612,7 @@ static func spawn_driftwood(g: Grid) -> void:
 				var scaled := PackedVector2Array()
 				for pt: Vector2 in poly:
 					scaled.append((pt - dw_origin) * s)
-				dcp.polygon = scaled
+				dcp.polygon = Geometry2D.convex_hull(scaled)
 				dw_body.add_child(dcp)
 			g.add_child(dw_body)
 			dw_body_ref = dw_body
@@ -672,7 +695,7 @@ static func spawn_rocks(g: Grid) -> void:
 
 			var body_ref: StaticBody2D = null
 			# Build a pixel-perfect StaticBody2D from the sprite's alpha channel.
-			var image: Image = (tex as Texture2D).get_image()
+			var image: Image = _alpha_image(tex as Texture2D)
 			var bm := BitMap.new()
 			bm.create_from_image_alpha(image)
 			var polys := bm.opaque_to_polygons(Rect2(Vector2.ZERO, image.get_size()), 2.0)
@@ -688,7 +711,7 @@ static func spawn_rocks(g: Grid) -> void:
 					var scaled := PackedVector2Array()
 					for pt: Vector2 in poly:
 						scaled.append((pt - origin) * rock_scale)
-					cp.polygon = scaled
+					cp.polygon = Geometry2D.convex_hull(scaled)
 					body.add_child(cp)
 				g.add_child(body)
 				body_ref = body
@@ -948,7 +971,7 @@ static func spawn_tide_pools(g: Grid) -> void:
 			g.add_child(ore_sprite)
 
 			var ore_body_ref: StaticBody2D = null
-			var ore_img: Image = ore_tex.get_image()
+			var ore_img: Image = _alpha_image(ore_tex)
 			var ore_bm := BitMap.new()
 			ore_bm.create_from_image_alpha(ore_img)
 			var ore_polys := ore_bm.opaque_to_polygons(Rect2(Vector2.ZERO, ore_img.get_size()), 2.0)
@@ -964,7 +987,7 @@ static func spawn_tide_pools(g: Grid) -> void:
 					var scaled := PackedVector2Array()
 					for pt: Vector2 in poly:
 						scaled.append((pt - ore_origin) * ore_scale)
-					ocp.polygon = scaled
+					ocp.polygon = Geometry2D.convex_hull(scaled)
 					ore_body.add_child(ocp)
 				g.add_child(ore_body)
 				ore_body_ref = ore_body
@@ -1032,7 +1055,7 @@ static func spawn_monolith(g: Grid) -> void:
 	sprite.z_index = int(pos.y) + TILES
 	g.add_child(sprite)
 
-	var mono_img: Image = tex.get_image()
+	var mono_img: Image = _alpha_image(tex)
 	var mono_bm := BitMap.new()
 	mono_bm.create_from_image_alpha(mono_img)
 	var mono_polys := mono_bm.opaque_to_polygons(Rect2(Vector2.ZERO, mono_img.get_size()), 2.0)
@@ -1045,7 +1068,7 @@ static func spawn_monolith(g: Grid) -> void:
 			var scaled := PackedVector2Array()
 			for pt: Vector2 in poly:
 				scaled.append((pt - mono_origin) * s)
-			mcp.polygon = scaled
+			mcp.polygon = Geometry2D.convex_hull(scaled)
 			mono_body.add_child(mcp)
 		mono_body.set_meta("occupier", "Monolith")
 		g.add_child(mono_body)
@@ -1087,39 +1110,73 @@ static func attach_crab_light(g: Grid, crab: Node2D) -> void:
 
 
 static func spawn_crabs(g: Grid) -> void:
-	var tex_down := load("res://art/enemies/alien crab facing up.png") as Texture2D
-	var tex_side := load("res://art/enemies/alien crab sideway facing left.png") as Texture2D
+	# Ambient peacetime creatures, layered by distance from the coast so
+	# the player meets a different threat as they push inland:
+	#   • Alien Crabs       — coastline (0-8 tiles north of shore)
+	#   • Tide Crawlers     — mid-band (8-16 tiles)
+	#   • Shore Stalkers    — deep inland (16-26 tiles)
+	# Sky Mawlings and the Brood Mother are excluded from peacetime —
+	# they're wave/event-only since they ramp difficulty quickly. Each
+	# species reuses Crab.tscn with a different CreatureDefs entry; the
+	# Crab class reads stats from the def, so combat / AI just works.
 	var crab_scene := load("res://scenes/Crab.tscn") as PackedScene
-
-	const COUNT := 10
-	const SHORE_BAND := 8
-
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-
 	var shore_y: int = g.height / 2
+	var light_tex := _make_light_texture()
+
+	# (def_key, count, y_min_offset_from_shore, y_max_offset_from_shore)
+	# y offsets are NEGATIVE because land is above the shore (smaller y).
+	var bands: Array = [
+		["alien_crab",    6, -8,  -1],
+		["tide_crawler",  3, -16, -8],
+		["shore_stalker", 2, -26, -16],
+	]
+
+	for band in bands:
+		var def_key: String = band[0]
+		var target_count: int = band[1]
+		var y_lo: int = shore_y + band[2]   # smaller y = further inland
+		var y_hi: int = shore_y + band[3]
+		_spawn_ambient_band(g, crab_scene, light_tex, def_key, target_count, y_lo, y_hi, shore_y)
+
+
+# Helper for spawn_crabs: pick `target_count` cells in the [y_lo, y_hi) band
+# and instantiate a Crab from the named def. Skips water / dirt / occupied
+# cells. Each creature gets the cyan eye-glow light parented so the night
+# cycle still picks them up via g.crab_lights.
+static func _spawn_ambient_band(g: Grid, crab_scene: PackedScene, light_tex: Texture2D, def_key: String, target_count: int, y_lo: int, y_hi: int, shore_y: int) -> void:
+	var def: Dictionary = CreatureDefs.DEFS.get(def_key, {})
+	if def.is_empty():
+		return
+	var tex_down := load(def.tex_down) as Texture2D
+	var tex_side := load(def.tex_side) as Texture2D
+	if tex_down == null or tex_side == null:
+		return
 
 	var candidates: Array = []
 	for x in g.width:
-		for y in range(shore_y - SHORE_BAND, shore_y):
+		for y in range(y_lo, y_hi):
 			var c := Vector2(x, y)
 			if g.grid.has(c) and not g.water_tiles.has(c) and not g.dirt_tiles.has(c) and g.grid[c].occupier == null:
 				candidates.append(c)
 	candidates.shuffle()
 
-	var light_tex := _make_light_texture()
-
-	var spawned := 0
+	var spawned: int = 0
 	for cell in candidates:
-		if spawned >= COUNT:
+		if spawned >= target_count:
 			break
 		var crab: Crab = crab_scene.instantiate()
 		crab.position = g.gridToWorld(cell)
-		crab.shore_y_min = shore_y - SHORE_BAND - 2
-		crab.shore_y_max = shore_y - 1
+		# Wander bounds: keep each species roughly inside its band so
+		# alien crabs don't wander into stalker territory and vice versa.
+		# A small overhang (±2 tiles) keeps movement looking natural at
+		# band edges instead of pingponging off invisible walls.
+		crab.shore_y_min = y_lo - 2
+		crab.shore_y_max = y_hi + 2 if y_hi < shore_y else shore_y - 1
 		g.add_child(crab)
 		g.crabs.append(crab)
-		crab.setup(tex_down, tex_side, g)
+		crab.setup(tex_down, tex_side, g, def)
 
 		var light := PointLight2D.new()
 		light.texture = light_tex

@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dex8s4h2kh7cx"
-path="res://.godot/imported/rock-dark-1.png-b85cd19bc32f93b8784dd3f3398a7256.ctex"
+path.s3tc="res://.godot/imported/rock-dark-1.png-b85cd19bc32f93b8784dd3f3398a7256.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://art/environment/rock-dark-1.png"
-dest_files=["res://.godot/imported/rock-dark-1.png-b85cd19bc32f93b8784dd3f3398a7256.ctex"]
+dest_files=["res://.godot/imported/rock-dark-1.png-b85cd19bc32f93b8784dd3f3398a7256.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
