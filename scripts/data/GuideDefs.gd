@@ -18,6 +18,7 @@ const ENTRIES: Dictionary = {
 		"sources": [
 			"Chop trees (3x3 footprint)",
 			"Pick up driftwood piles scattered along the coast",
+			"Hunt Driftbacks — slow grazers loitering by the driftwood piles (1-3)",
 		],
 	},
 	"Fiber": {

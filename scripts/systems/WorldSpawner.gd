@@ -1140,6 +1140,12 @@ static func spawn_crabs(g: Grid) -> void:
 		var y_hi: int = shore_y + band[3]
 		_spawn_ambient_band(g, crab_scene, light_tex, def_key, target_count, y_lo, y_hi, shore_y)
 
+	# Driftbacks — peaceful driftwood-haulers, one beside each driftwood pile.
+	# spawnDriftwood() runs before spawnCrabs() in worldgen, so g.driftwood_nodes
+	# is already populated. Tying them to piles guarantees they always appear and
+	# reinforces the "this creature carries driftwood" read.
+	_spawn_driftbacks_near_driftwood(g, crab_scene, light_tex, shore_y)
+
 
 # Helper for spawn_crabs: pick `target_count` cells in the [y_lo, y_hi) band
 # and instantiate a Crab from the named def. Skips water / dirt / occupied
@@ -1188,6 +1194,60 @@ static func _spawn_ambient_band(g: Grid, crab_scene: PackedScene, light_tex: Tex
 		g.crab_lights.append(light)
 
 		spawned += 1
+
+
+# Spawn one Driftback on a free cell adjacent to each driftwood pile. The pile
+# cell itself is occupied (non-navigable), so the creature stands beside it and
+# its wander band is clamped tight around the pile so it lingers nearby instead
+# of roaming inland. Ambient (non-aggressive) like the band-spawned creatures —
+# it only retaliates when attacked. Saved/restored generically via the shared
+# ambient-creature serialization (Grid.serialize_world reverse-looks-up def_key).
+static func _spawn_driftbacks_near_driftwood(g: Grid, crab_scene: PackedScene, light_tex: Texture2D, shore_y: int) -> void:
+	var def: Dictionary = CreatureDefs.DEFS.get("driftback", {})
+	if def.is_empty():
+		return
+	var tex_down := load(def.tex_down) as Texture2D
+	var tex_side := load(def.tex_side) as Texture2D
+	if tex_down == null or tex_side == null:
+		return
+
+	# How far a Driftback is allowed to drift from its home pile, in tiles.
+	const DRIFT_WANDER: int = 5
+	# 8-neighbourhood, shuffled per pile so the creature isn't always NE of it.
+	var offsets: Array = [
+		Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1),
+		Vector2(1, 1), Vector2(1, -1), Vector2(-1, 1), Vector2(-1, -1),
+	]
+
+	for cell in g.driftwood_nodes.keys():
+		offsets.shuffle()
+		var spot: Vector2 = Vector2(-1, -1)
+		for off in offsets:
+			var c: Vector2 = cell + off
+			if g.grid.has(c) and not g.water_tiles.has(c) and not g.dirt_tiles.has(c) and g.grid[c].occupier == null:
+				spot = c
+				break
+		if spot == Vector2(-1, -1):
+			continue  # pile is boxed in — skip it rather than overlap something
+
+		var crab: Crab = crab_scene.instantiate()
+		crab.position = g.gridToWorld(spot)
+		# Keep it loitering around its driftwood, clamped to the coastal land
+		# band (never south of the shoreline into the water).
+		crab.shore_y_min = int(spot.y) - DRIFT_WANDER
+		crab.shore_y_max = min(int(spot.y) + DRIFT_WANDER, shore_y - 1)
+		g.add_child(crab)
+		g.crabs.append(crab)
+		crab.setup(tex_down, tex_side, g, def)
+
+		var light := PointLight2D.new()
+		light.texture = light_tex
+		light.color = Color(0.2, 0.9, 1.0)
+		light.energy = 0.0
+		light.texture_scale = 2.5
+		light.position = Vector2(g.cell_size * 0.5, g.cell_size * 0.5)
+		crab.add_child(light)
+		g.crab_lights.append(light)
 
 
 # ── World restoration (save/load) ─────────────────────────────────────────────

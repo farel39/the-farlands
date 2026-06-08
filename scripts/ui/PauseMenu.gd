@@ -30,7 +30,7 @@ func _build() -> void:
 	add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(420, 0)
+	panel.custom_minimum_size = Vector2(460, 0)
 	center.add_child(panel)
 
 	var margin := MarginContainer.new()
@@ -46,7 +46,7 @@ func _build() -> void:
 	# and save-toast. The Load and Controls views inherit the same
 	# stack so they have headroom too — Controls especially, since
 	# its outer column has a vertical scroll plus a Back button below.
-	stack.custom_minimum_size = Vector2(360, 460)
+	stack.custom_minimum_size = Vector2(400, 460)
 	margin.add_child(stack)
 
 	_root_view = _build_root_view()
@@ -144,6 +144,18 @@ func _build_controls_view() -> Control:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(title)
 
+	# Keyboard rows. The fog-of-war toggle is a debug-only cheat (see
+	# Main._unhandled_input, gated on OS.is_debug_build()), so it's only listed
+	# in debug/editor builds — release players never see a key that does nothing
+	# for them.
+	var keyboard_rows: Array = [
+		["A",      "Order selected drafted unit to attack"],
+		["R",      "Toggle draft on every selected unit"],
+		["ESC",    "Pause / resume — also closes blueprint mode"],
+	]
+	if OS.is_debug_build():
+		keyboard_rows.append(["F", "Toggle fog of war (debug)"])
+
 	# Pairs of (binding, description). Grouped by section via header rows.
 	var sections: Array = [
 		{"header": "Mouse", "rows": [
@@ -152,12 +164,7 @@ func _build_controls_view() -> Control:
 			["Click + drag",          "Rectangle-select multiple units"],
 			["Right-click",           "Contextual action — move, attack, harvest, mine, cancel"],
 		]},
-		{"header": "Keyboard", "rows": [
-			["A",      "Order selected drafted unit to attack"],
-			["R",      "Toggle draft on every selected unit"],
-			["ESC",    "Pause / resume — also closes blueprint mode"],
-			["F",      "Toggle fog of war (debug)"],
-		]},
+		{"header": "Keyboard", "rows": keyboard_rows},
 		{"header": "UI tabs (bottom row)", "rows": [
 			["Construct",  "Place buildings (Production / Structures / Lighting / Comms)"],
 			["Inventory",  "Pooled team resources, with search"],
@@ -184,20 +191,27 @@ func _build_controls_view() -> Control:
 		col.add_child(header)
 		var grid := GridContainer.new()
 		grid.columns = 2
+		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		grid.add_theme_constant_override("h_separation", 14)
-		grid.add_theme_constant_override("v_separation", 2)
+		grid.add_theme_constant_override("v_separation", 6)
 		for row in section.rows:
 			var key_lbl := Label.new()
 			key_lbl.text = String(row[0])
-			key_lbl.custom_minimum_size = Vector2(170, 0)
+			key_lbl.custom_minimum_size = Vector2(150, 0)
 			key_lbl.modulate = Color(0.95, 0.95, 0.65)
 			key_lbl.add_theme_font_size_override("font_size", 11)
+			# Top-align so a multi-line description keeps its key on the first row.
+			key_lbl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 			grid.add_child(key_lbl)
 			var desc_lbl := Label.new()
 			desc_lbl.text = String(row[1])
 			desc_lbl.add_theme_font_size_override("font_size", 11)
 			desc_lbl.modulate = Color(0.88, 0.88, 0.92)
 			desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			# A real minimum width + expand keeps the description on a clean
+			# horizontal line instead of collapsing to one word per row.
+			desc_lbl.custom_minimum_size = Vector2(190, 0)
+			desc_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			grid.add_child(desc_lbl)
 		col.add_child(grid)
 

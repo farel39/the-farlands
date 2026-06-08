@@ -1870,6 +1870,39 @@ func queue_build(blueprint_pos: Vector2) -> void:
 		_start_next_task()
 
 
+# Force this unit to build the blueprint at `blueprint_pos` right now, even
+# while drafted. Mirrors the "build" branch of _start_next_task but skips the
+# drafted gate that _start_next_task enforces — used by the blueprint click
+# popup so the player can push a construction through when every unit is
+# drafted (the auto-scheduler only ever commands undrafted workers). Materials
+# are pulled from the shared pool on arrival, same as a normal build. Returns
+# false if the blueprint is gone or has no reachable adjacent cell.
+func force_build(blueprint_pos: Vector2) -> bool:
+	if grid == null or not grid.blueprints.has(blueprint_pos):
+		return false
+	var adj: Array = grid.get_blueprint_adjacent(blueprint_pos)
+	if adj.is_empty():
+		return false
+	var unit_grid := get_grid_pos()
+	var best_dest: Vector2 = adj[0]
+	for c in adj:
+		if unit_grid.distance_to(c) < unit_grid.distance_to(best_dest):
+			best_dest = c
+	# Take over from whatever the unit was doing. Stop any work loop and clear
+	# stale work targets so the arrival handler runs the build branch instead
+	# of a leftover harvest/mine/repair. (Callers prefer idle units, so these
+	# are normally already cleared — this is defensive.)
+	_stop_work_loop()
+	harvest_target = Vector2(-1, -1)
+	mine_target = Vector2(-1, -1)
+	repair_target = Vector2(-1, -1)
+	demolish_target = Vector2(-1, -1)
+	gather_target = Vector2(-1, -1)
+	build_target = blueprint_pos
+	path = _set_dest(best_dest)
+	return true
+
+
 # Send this unit to repair the damaged building anchored at `anchor`. Drafted
 # units take the job immediately (right-click flow). Undrafted units queue it
 # and let _start_next_task dispatch via the priority scheduler.

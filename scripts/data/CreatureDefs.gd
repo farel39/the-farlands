@@ -78,6 +78,41 @@ const DEFS: Dictionary = {
 			{"item": "Mawling Wing", "min": 1, "max": 1, "chance": 1.0},
 		],
 	},
+	# Peaceful ambient wildlife — a slow, heavily-armored scavenger that hauls a
+	# barnacle-crusted slab of driftwood on its back. Spawned near driftwood
+	# piles by WorldSpawner (never in waves); like other ambient creatures it
+	# only fights back if attacked. Killing one yields Driftwood Piece, a combat
+	# alternative to chopping trees / beachcombing.
+	"driftback": {
+		"name": "Driftback",
+		"tex_down": "res://art/enemies/driftback facing up.png",
+		"tex_side": "res://art/enemies/driftback sideway facing left.png",
+		"flip_v_south": true,
+		"hp": 55,
+		"speed": 45.0,
+		"attack_damage": 8,
+		"attack_cooldown": 1.5,
+		"attack_range_tiles": 0.9,
+		"render_scale": 1.4,
+		# Directional walk animation. A single LEFT-facing frame sheet that
+		# Crab.gd rotates to the heading of travel — because creatures are drawn
+		# top-down, spinning the sprite reads correctly for every direction, so
+		# one sheet covers all of them. key_white chroma-keys the opaque white
+		# JPG backdrop (these frames have no alpha of their own).
+		"walk_anim": {
+			"dir": "res://art/enemies/driftback walking animation facing left",
+			"prefix": "frame_",
+			"ext": "jpg",
+			"count": 16,
+			"fps": 7.0,
+			"facing": "left",
+			"key_white": true,
+		},
+		"drops": [
+			{"item": "Driftwood Piece", "min": 1, "max": 3, "chance": 1.0},
+			{"item": "Crab Shell", "min": 1, "max": 1, "chance": 0.3},
+		],
+	},
 	# Boss-tier ambush creature used by the Brood Mother random event. Slow,
 	# high HP, devastating attack — players are meant to draft + focus-fire.
 	# render_scale stretches the in-world sprite past the default 1-tile

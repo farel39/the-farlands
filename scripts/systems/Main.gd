@@ -832,7 +832,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				u.set_drafted(not u.drafted)
 			get_viewport().set_input_as_handled()
 			return
-		if event.keycode == KEY_F:
+		# Fog-of-war toggle is a debug-only cheat. Gated on OS.is_debug_build()
+		# so it works in the editor + debug exports (for QA) but is inert in
+		# release builds — matches how the debug dropdown is gated in GUI.gd,
+		# and the PauseMenu controls list only shows this key in debug builds.
+		if event.keycode == KEY_F and OS.is_debug_build():
 			_fog_layer.visible = not _fog_layer.visible
 			get_viewport().set_input_as_handled()
 			return
@@ -927,6 +931,29 @@ func _handle_click() -> void:
 		gui.show_tree_panel(grid.get_tree_root(grid_pos), mouse_screen)
 		return
 
+	# Left-click on a built Fabricator → small "Craft" popup whose button opens
+	# the craft panel. Mirrors the right-click shortcut (which opens the panel
+	# directly) so players who reach for left-click still get there. Built
+	# structures have no collision body, so resolve via the cell→building map
+	# the same way the right-click handler does.
+	if grid.cell_to_building.has(grid_pos):
+		var fab_anchor: Vector2 = grid.cell_to_building[grid_pos]
+		if grid.fabricators.has(fab_anchor):
+			_inspect_pending = func():
+				gui.show_craft_panel(fab_anchor)
+			_inspect_btn.text = "Craft"
+			_loot_btn.visible = false
+			_inspect_popup.custom_minimum_size = Vector2(110, 36)
+			_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
+			_inspect_popup.visible = true
+			return
+
+	# Left-click on a construction blueprint → Build / Cancel popup, identical
+	# to the right-click handler so force-build is reachable from either button.
+	var bp_anchor_l: Vector2 = grid.blueprint_at_cell(grid_pos)
+	if bp_anchor_l != Vector2(-1, -1):
+		_show_blueprint_popup(bp_anchor_l)
+		return
 
 	if not cell.navigable:
 		return
@@ -2056,6 +2083,7 @@ func _handle_right_click() -> void:
 							cb.call()
 						else:
 							u_ship.draft_inspect_to(dest_ship, cb)
+					_loot_btn.text = "Loot"
 					_loot_btn.visible = true
 					_inspect_popup.custom_minimum_size = Vector2(220, 36)
 				return
@@ -2077,6 +2105,7 @@ func _handle_right_click() -> void:
 							cb.call()
 						else:
 							u_crate.draft_inspect_to(dest_crate, cb)
+					_loot_btn.text = "Loot"
 					_loot_btn.visible = true
 					_inspect_popup.custom_minimum_size = Vector2(220, 36)
 				return
@@ -2151,21 +2180,13 @@ func _handle_right_click() -> void:
 			_inspect_popup.visible = true
 			return
 
-	# Right-click on a construction blueprint → cancel it and refund the
-	# committed materials to the closest live unit. Tiny popup confirms
-	# the cancel (matches the harvest/mine pattern) so a stray click
-	# during tactical movement doesn't wipe a half-built structure.
-	# blueprint_at_cell returns (-1,-1) when the cell isn't a blueprint.
+	# Right-click on a construction blueprint → Build / Cancel popup. "Build"
+	# force-dispatches a unit even when everyone is drafted; "Cancel" tears it
+	# down and refunds. Same popup as left-click so it's easy to reach from
+	# either mouse button. blueprint_at_cell returns (-1,-1) when not a blueprint.
 	var bp_anchor: Vector2 = grid.blueprint_at_cell(click_cell)
 	if bp_anchor != Vector2(-1, -1):
-		var anchor_to_cancel: Vector2 = bp_anchor
-		_inspect_pending = func():
-			_cancel_blueprint_with_refund(anchor_to_cancel)
-		_inspect_btn.text = "Cancel"
-		_loot_btn.visible = false
-		_inspect_popup.custom_minimum_size = Vector2(110, 36)
-		_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
-		_inspect_popup.visible = true
+		_show_blueprint_popup(bp_anchor)
 		return
 
 	# Right-click on a regrowing tree → tell the player it's not chop-ready.
@@ -2311,6 +2332,66 @@ func _cancel_blueprint_with_refund(anchor: Vector2) -> void:
 	if gui != null and gui.has_method("notify_loot_batch"):
 		gui.notify_loot_batch(anchor_world, refund)
 	notify_inventory_changed()
+
+
+# Two-button popup shown when a blueprint is clicked (left OR right). "Build"
+# force-dispatches a unit to construct it immediately — the escape hatch for
+# when every unit is drafted, since the auto-scheduler only commands undrafted
+# workers. "Cancel" tears it down and refunds. Reachable from both mouse
+# buttons so it's easy to find.
+func _show_blueprint_popup(bp_anchor: Vector2) -> void:
+	var anchor: Vector2 = bp_anchor
+	_inspect_pending = func():
+		_force_build_blueprint(anchor)
+	_inspect_btn.text = "Build"
+	_loot_pending = func():
+		_cancel_blueprint_with_refund(anchor)
+	_loot_btn.text = "Cancel"
+	_loot_btn.visible = true
+	_inspect_popup.custom_minimum_size = Vector2(180, 36)
+	_inspect_popup.position = get_viewport().get_mouse_position() + Vector2(4, 4)
+	_inspect_popup.visible = true
+
+
+# Dispatch the closest available unit to build the blueprint right now,
+# bypassing the worker scheduler (which skips drafted units). Surfaces a world
+# toast if the team can't afford it or no unit can reach the site.
+func _force_build_blueprint(anchor: Vector2) -> void:
+	if not grid.blueprints.has(anchor):
+		return
+	var toast_pos: Vector2 = grid.gridToWorld(anchor) + Vector2(grid.cell_size * 0.5, -grid.cell_size * 0.3)
+	if not _can_build_now(anchor):
+		_spawn_world_toast(toast_pos, "Not enough materials", Color(1.0, 0.6, 0.6))
+		return
+	var builder: Unit = _pick_force_builder(anchor)
+	if builder == null:
+		return
+	if not builder.force_build(anchor):
+		_spawn_world_toast(toast_pos, "Can't reach the build site", Color(1.0, 0.6, 0.6))
+
+
+# Closest live, conscious unit to build a blueprint. Prefers idle units so a
+# force-build doesn't rip an undrafted worker off an active harvest/mine;
+# falls back to any live unit (the all-drafted case, where nobody's "busy").
+func _pick_force_builder(anchor: Vector2) -> Unit:
+	var idle: Unit = null
+	var idle_d: float = INF
+	var any: Unit = null
+	var any_d: float = INF
+	for u in all_units:
+		if not is_instance_valid(u):
+			continue
+		var un: Unit = u as Unit
+		if un.is_dead() or un.is_downed or un.evacuated:
+			continue
+		var d: float = un.get_grid_pos().distance_to(anchor)
+		if d < any_d:
+			any_d = d
+			any = un
+		if not un.is_busy() and d < idle_d:
+			idle_d = d
+			idle = un
+	return idle if idle != null else any
 
 
 # Closest still-standing teammate to dispatch toward `target`. Selected units

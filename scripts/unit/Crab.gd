@@ -49,6 +49,31 @@ var flip_v_south: bool = true
 # render at 3.0 so they visually dominate. Default 1.0 keeps every other
 # creature exactly as before.
 var render_scale: float = 1.0
+
+# ── Directional walk animation (optional, per-creature) ──────────────────────
+# When a def supplies "walk_anim", the creature renders a rotating sprite-sheet
+# walk cycle instead of the static down/side sprites: a single base-facing sheet
+# is spun to the movement direction (works cleanly because creatures are drawn
+# top-down). Used by the Driftback. Absent / empty → classic static behavior,
+# so every other creature is untouched.
+var _uses_rotation_anim: bool = false
+var _walk_frames: Array = []          # Array[Texture2D], one per cycle frame
+var _walk_frame_idx: int = 0
+var _walk_anim_t: float = 0.0         # 0..1 progress into the current frame
+var _walk_fps: float = 12.0
+var _walk_base_angle: float = PI      # heading the base sheet faces (left = PI)
+var _last_move_dir: Vector2 = Vector2.DOWN
+# Per-frame Sprite2D.offset (texture pixels) that pins the creature's body
+# centroid to a fixed point across the whole cycle. AI-generated frames drift
+# the body around within the frame; without this the loop visibly snaps back
+# every cycle. Computed once per sheet and shared via _walk_offset_cache.
+var _walk_frame_offsets: Array = []   # Array[Vector2], parallel to _walk_frames
+static var _walk_offset_cache: Dictionary = {}   # dir_path -> Array[Vector2]
+# Local offset of the Sprite2D within the Crab node. ZERO for static creatures
+# (texture top-left on the origin, centered=false). For rotation-anim creatures
+# the sprite is centered and parked at the cell centre so it spins about its
+# own body rather than swinging around a corner.
+var _sprite_base_pos: Vector2 = Vector2.ZERO
 # Per-creature loot table — copied from the def in setup(). On death each entry
 # rolls independently against `chance`, then randi_range(min,max) for the count.
 # Empty array = no drops (default for ambient peacetime spawns without a def).
@@ -91,7 +116,12 @@ func setup(down: Texture2D, side: Texture2D, g: Grid, def: Dictionary = {}) -> v
 		_growl_sound = String(def.get("growl_sound", ""))
 	_rng.randomize()
 	_idle_duration = _rng.randf_range(0.5, 2.5)
-	_apply_sprite(down, false)
+	if not def.is_empty() and def.has("walk_anim"):
+		_load_walk_anim(def["walk_anim"])
+	if _uses_rotation_anim:
+		_init_walk_sprite()
+	else:
+		_apply_sprite(down, false)
 
 
 func is_dead() -> bool:
@@ -139,15 +169,16 @@ func _draw() -> void:
 		return
 	var pct: float = clamp(float(hp) / float(max_hp), 0.0, 1.0)
 	var tex_size: Vector2 = sprite_node.texture.get_size() * sprite_node.scale
-	# Visible body bounds in local coords. centered=false means top-left
-	# at origin, top-right at (tex_size.x, 0), bottom at (..., tex_size.y).
-	# Centered=true (the engine default) would put center at origin — kept
-	# as a fallback for safety in case the scene ever flips that flag.
-	var body_left: float = 0.0
-	var body_top: float = 0.0
+	# Visible body bounds in local coords, anchored to the sprite's own local
+	# position (ZERO for static creatures; the cell centre for rotation-anim
+	# ones). centered=false puts the texture top-left on that point; centered=
+	# true (rotation-anim) puts the texture centre there.
+	var origin: Vector2 = sprite_node.position
+	var body_left: float = origin.x
+	var body_top: float = origin.y
 	if sprite_node.centered:
-		body_left = -tex_size.x * 0.5
-		body_top = -tex_size.y * 0.5
+		body_left -= tex_size.x * 0.5
+		body_top -= tex_size.y * 0.5
 	var body_center_x: float = body_left + tex_size.x * 0.5
 	var bar_w: float = tex_size.x * 0.7
 	var bar_h: float = 4.0
@@ -247,6 +278,166 @@ func _apply_sprite(tex: Texture2D, flip_h: bool, flip_v: bool = false) -> void:
 	# Default scaling fits the texture into a 1-cell-wide footprint. Boss
 	# creatures bump render_scale (e.g., 3.0 for the Brood Mother) so they
 	# visually dominate the area without changing collision math.
+	var s := float(grid.cell_size) / float(tex.get_width()) * render_scale
+	_sprite.scale = Vector2(s, s)
+
+
+# Load the per-creature walk sheet described by the def's "walk_anim" dict and
+# flip this crab into rotation-anim mode. Frames are named <prefix><N>.<ext>
+# (1-based) inside `dir`. JPG frames (no alpha) get the white-key shader.
+func _load_walk_anim(spec: Dictionary) -> void:
+	var dir_path: String = String(spec.get("dir", ""))
+	var prefix: String = String(spec.get("prefix", "frame_"))
+	var ext: String = String(spec.get("ext", "png"))
+	var count: int = int(spec.get("count", 0))
+	if dir_path == "" or count <= 0:
+		return
+	var frames: Array = []
+	for i in range(1, count + 1):
+		var path: String = "%s/%s%d.%s" % [dir_path, prefix, i, ext]
+		var tex: Texture2D = load(path) as Texture2D
+		if tex != null:
+			frames.append(tex)
+	if frames.is_empty():
+		return
+	_walk_frames = frames
+	_walk_fps = float(spec.get("fps", 12.0))
+	_walk_base_angle = _facing_to_angle(String(spec.get("facing", "left")))
+	_uses_rotation_anim = true
+	# Stabilize the cycle on the body centroid so the loop doesn't snap back.
+	# Keyed by dir so all Driftbacks share one computation. key_white frames are
+	# keyed on near-white; otherwise we treat low-alpha as background.
+	_walk_frame_offsets = _frame_offsets(dir_path, frames, bool(spec.get("key_white", false)))
+	if bool(spec.get("key_white", false)):
+		_apply_white_key_material()
+
+
+# Map the base sheet's facing string to the heading angle its head points along.
+# (Godot 2D: +x = 0, +y = PI/2 since y is down.)
+func _facing_to_angle(facing: String) -> float:
+	match facing:
+		"right": return 0.0
+		"up": return -PI * 0.5
+		"down": return PI * 0.5
+	return PI   # "left" / default
+
+
+# Per-frame Sprite2D.offset that re-centres each frame on the creature's body
+# centroid, cancelling the positional drift baked into AI-generated frames so
+# the cycle loops seamlessly. Cached by `key` (the sheet dir) so the pixel pass
+# runs once no matter how many creatures share the sheet.
+func _frame_offsets(key: String, frames: Array, key_white: bool) -> Array:
+	if _walk_offset_cache.has(key):
+		return _walk_offset_cache[key]
+	var offsets: Array = []
+	for tex in frames:
+		offsets.append(_centroid_offset(tex as Texture2D, key_white))
+	_walk_offset_cache[key] = offsets
+	return offsets
+
+
+# Offset (in texture pixels) that moves a frame's body centroid onto the
+# texture centre — i.e. onto the centered sprite's origin. "Body" pixels are
+# those that survive the background test: near-white rejected for key_white
+# sheets, else low-alpha rejected. Subsamples for speed; returns ZERO on any
+# failure so stabilization simply no-ops rather than breaking rendering.
+func _centroid_offset(tex: Texture2D, key_white: bool) -> Vector2:
+	if tex == null:
+		return Vector2.ZERO
+	var img: Image = tex.get_image()
+	if img == null:
+		return Vector2.ZERO
+	var w: int = img.get_width()
+	var h: int = img.get_height()
+	if w <= 0 or h <= 0:
+		return Vector2.ZERO
+	var step: int = max(1, int(round(float(max(w, h)) / 256.0)))  # ~256 samples/axis
+	var sx: float = 0.0
+	var sy: float = 0.0
+	var n: int = 0
+	for y in range(0, h, step):
+		for x in range(0, w, step):
+			var c: Color = img.get_pixel(x, y)
+			var is_body: bool = (min(c.r, min(c.g, c.b)) < 0.90) if key_white else (c.a > 0.5)
+			if is_body:
+				sx += float(x)
+				sy += float(y)
+				n += 1
+	if n == 0:
+		return Vector2.ZERO
+	return Vector2(float(w) * 0.5 - sx / float(n), float(h) * 0.5 - sy / float(n))
+
+
+func _apply_white_key_material() -> void:
+	var sp := get_node_or_null("Sprite2D") as Sprite2D
+	if sp == null:
+		return
+	var sh := load("res://art/shaders/white_key.gdshader") as Shader
+	if sh == null:
+		return
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	sp.material = mat
+
+
+# Configure the Sprite2D for rotation-anim rendering: centered so it spins about
+# its body, parked at the cell centre, showing the first frame facing south.
+func _init_walk_sprite() -> void:
+	_sprite = get_node_or_null("Sprite2D")
+	if _sprite == null:
+		return
+	_sprite.centered = true
+	_sprite_base_pos = Vector2(grid.cell_size * 0.5, grid.cell_size * 0.5)
+	_sprite.position = _sprite_base_pos
+	_last_move_dir = Vector2.DOWN
+	_apply_walk_frame(Vector2.DOWN)
+
+
+# Point the creature toward `dir`. Rotation-anim creatures (Driftback) spin
+# their single walk sheet to the heading; everyone else swaps down/side sprites
+# with the usual flips.
+func _face_dir(dir: Vector2) -> void:
+	if _uses_rotation_anim:
+		_apply_walk_frame(dir)
+	elif abs(dir.x) > abs(dir.y):
+		_apply_sprite(_tex_side, dir.x > 0)
+	else:
+		_apply_sprite(_tex_down, false, (flip_v_south and dir.y > 0.0) or (not flip_v_south and dir.y < 0.0))
+
+
+# Step the walk cycle forward by `delta`. Only advances while the creature is
+# actually moving (callers gate this), so a stationary creature freezes on its
+# current frame instead of marching in place.
+func _advance_walk_anim(delta: float) -> void:
+	if not _uses_rotation_anim or _walk_frames.is_empty():
+		return
+	_walk_anim_t += delta * _walk_fps
+	while _walk_anim_t >= 1.0:
+		_walk_anim_t -= 1.0
+		_walk_frame_idx = (_walk_frame_idx + 1) % _walk_frames.size()
+
+
+# Render the current walk frame, rotated so the sheet's base heading lines up
+# with `dir`. Keeps the last heading when `dir` is ~zero so a creature that
+# stops doesn't snap back to its default facing.
+func _apply_walk_frame(dir: Vector2) -> void:
+	if _sprite == null:
+		_sprite = get_node_or_null("Sprite2D")
+	if _sprite == null or _walk_frames.is_empty():
+		return
+	if dir.length() > 0.01:
+		_last_move_dir = dir
+	var idx: int = _walk_frame_idx % _walk_frames.size()
+	var tex: Texture2D = _walk_frames[idx]
+	_sprite.texture = tex
+	_sprite.flip_h = false
+	_sprite.flip_v = false
+	# Centroid-stabilize: pin the body to the sprite origin so the cycle doesn't
+	# drift-and-snap. offset is in texture pixels and rides the node's scale +
+	# rotation, so the body stays put for every heading.
+	if idx < _walk_frame_offsets.size():
+		_sprite.offset = _walk_frame_offsets[idx]
+	_sprite.rotation = _last_move_dir.angle() - _walk_base_angle
 	var s := float(grid.cell_size) / float(tex.get_width()) * render_scale
 	_sprite.scale = Vector2(s, s)
 
@@ -355,12 +546,10 @@ func _tick_combat(delta: float) -> void:
 		dir = dir_unit
 		target_world = unit_center
 
-	# Face the target. The down sprite is drawn "facing up" by default, so flip
-	# it vertically when moving south so the crab leads with its eyes/claws.
-	if abs(dir.x) > abs(dir.y):
-		_apply_sprite(_tex_side, dir.x > 0)
-	else:
-		_apply_sprite(_tex_down, false, (flip_v_south and dir.y > 0.0) or (not flip_v_south and dir.y < 0.0))
+	# Face the target. Rotation-anim creatures spin their walk sheet toward it;
+	# static ones swap down/side sprites (down-sprite faces up by default, so it
+	# flips vertically when leading south).
+	_face_dir(dir)
 
 	var d: float = crab_center.distance_to(target_world)
 	var range_world: float = attack_range_tiles * float(grid.cell_size)
@@ -369,6 +558,8 @@ func _tick_combat(delta: float) -> void:
 			_wall_target_cell = ahead_cell if wall_in_way else _NO_WALL_TARGET
 			_start_lunge(dir)
 	else:
+		# Only cycle the walk frames while actually closing the gap.
+		_advance_walk_anim(delta)
 		var step: float = speed * delta
 		if step > d:
 			step = d
@@ -389,7 +580,7 @@ func _tick_attack(delta: float) -> void:
 	var amp: float = 1.0 - abs(f * 2.0 - 1.0)
 	var dist_world: float = LUNGE_DISTANCE_TILES * float(grid.cell_size)
 	if _sprite:
-		_sprite.position = _attack_dir_vec * (amp * dist_world)
+		_sprite.position = _sprite_base_pos + _attack_dir_vec * (amp * dist_world)
 	# Damage lands at the apex of the lunge.
 	if not _hit_landed and f >= 0.5:
 		_hit_landed = true
@@ -399,7 +590,7 @@ func _tick_attack(delta: float) -> void:
 		_attack_cooldown = attack_cooldown_max
 		_wall_target_cell = _NO_WALL_TARGET
 		if _sprite:
-			_sprite.position = Vector2.ZERO
+			_sprite.position = _sprite_base_pos
 
 
 func _apply_combat_hit() -> void:
@@ -427,17 +618,16 @@ func _apply_combat_hit() -> void:
 
 
 func _walk(delta: float) -> void:
+	_advance_walk_anim(delta)
 	var remaining := speed * delta
 	while remaining > 0.0 and not _path.is_empty():
 		var to_next: Vector2 = _path[0] - position
 		var dist := to_next.length()
-		# Update facing direction. Down-sprite is "facing up"; flip vertically
-		# when walking south so the crab faces the way it's moving.
+		# Face the way we're moving. Rotation-anim creatures spin their walk
+		# sheet; static ones swap down/side sprites (down-sprite is "facing up",
+		# so it flips vertically when walking south).
 		var dir := to_next.normalized()
-		if abs(dir.x) > abs(dir.y):
-			_apply_sprite(_tex_side, dir.x > 0)
-		else:
-			_apply_sprite(_tex_down, false, (flip_v_south and dir.y > 0.0) or (not flip_v_south and dir.y < 0.0))
+		_face_dir(dir)
 		if dist <= remaining:
 			position = _path[0]
 			_path.pop_front()
