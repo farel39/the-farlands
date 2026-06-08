@@ -209,11 +209,21 @@ func _tick_wave(delta: float) -> void:
 
 
 func _tick_evac(delta: float) -> void:
-	# Defeat triggers if every survivor is gone before any reach the shuttle,
-	# OR if the rescue deadline expires with anyone still inbound.
-	if _all_remaining_units_dead():
-		_enter_defeat()
+	# Mark anyone standing on the shuttle as aboard first, so a unit that
+	# reaches it on the same tick it becomes the last mover still counts.
+	_check_evac_arrivals()
+	# The run resolves the instant no conscious, un-boarded survivor remains.
+	# Whoever's left is either aboard (→ victory) or down for good with nobody
+	# left to revive and carry them (→ defeat). Treating those abandoned downed
+	# teammates as casualties is what lets "1 / 3 survived" end the run cleanly
+	# instead of stalling until the timer expires.
+	if not _any_active_survivor():
+		if _has_evacuated():
+			_enter_victory()
+		else:
+			_enter_defeat()
 		return
+	# Hard deadline: the shuttle leaves whether stragglers made it or not.
 	if phase_timer >= EVAC_TIME_LIMIT:
 		_enter_defeat()
 		return
@@ -225,12 +235,6 @@ func _tick_evac(delta: float) -> void:
 	if _spawn_timer <= 0.0:
 		_spawn_wave_crab()
 		_spawn_timer = current_interval
-	# Each tick, mark any live unit standing on the shuttle as evacuated.
-	_check_evac_arrivals()
-	# Victory the moment every still-living survivor has boarded. Dead units
-	# don't block the check — they're casualties, not stragglers.
-	if _all_live_units_evacuated():
-		_enter_victory()
 
 
 # Mark each live unit within EVAC_REACH_TILES of the shuttle as evacuated.
@@ -429,43 +433,37 @@ func _all_units_dead() -> bool:
 	return true
 
 
-# Defeat condition during EVAC: nobody left to evacuate. Permanently-dead
-# units (HP=0 AND not revivable) are skipped; downed teammates still count
-# as "in play" because a live teammate could still revive them.
-func _all_remaining_units_dead() -> bool:
+# A unit that can still influence the EVAC: conscious, alive, and not yet
+# aboard. Only these can walk themselves to the shuttle OR revive and carry a
+# downed teammate. Once none remain, the run is decided — any downed bodies
+# still on the field are unrevivable (nobody's left to reach them), so they're
+# casualties, not stragglers, and must not keep the run in limbo.
+func _any_active_survivor() -> bool:
 	if main == null:
 		return false
 	for u in main.all_units:
 		if not is_instance_valid(u):
 			continue
 		var unit: Unit = u as Unit
-		# Permanently dead — true casualty, doesn't keep the run going.
-		if unit.is_dead() and not unit.is_downed:
-			continue
-		return false
-	return true
-
-
-# Victory condition: at least one survivor evacuated, and no live OR downed
-# teammate is left on the field. Casualties (permanent dead) don't block
-# the check — only live stragglers and downed bodies do, since the latter
-# can still be rescued.
-func _all_live_units_evacuated() -> bool:
-	if main == null:
-		return false
-	var any_evacuated: bool = false
-	for u in main.all_units:
-		if not is_instance_valid(u):
-			continue
-		var unit: Unit = u as Unit
-		if unit.is_dead() and not unit.is_downed:
-			continue
 		if unit.evacuated:
-			any_evacuated = true
 			continue
-		# A live or downed straggler still on the map blocks victory.
+		# is_dead() is true for downed units too (HP 0), so this covers both
+		# permanent casualties and the unconscious in one check.
+		if unit.is_dead() or unit.is_downed:
+			continue
+		return true
+	return false
+
+
+# At least one survivor made it aboard the shuttle. Combined with the absence
+# of any active survivor, this is the victory condition.
+func _has_evacuated() -> bool:
+	if main == null:
 		return false
-	return any_evacuated
+	for u in main.all_units:
+		if is_instance_valid(u) and (u as Unit).evacuated:
+			return true
+	return false
 
 
 func _count_aggressive_crabs_alive() -> int:
